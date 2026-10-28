@@ -40,15 +40,17 @@ LeRobot episode 共享缓存由数据集自动管理，关闭时追加 `train_da
 VFA ONNX 导出入口为 `python -m vfa.trainer.onnx`，对应配置位于 `configs/vfa_onnx/`。
 通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_vfa.py` 提供 VFA 的历史缓冲示例。
 
-RoboTwin2 评测时将策略名设为 `VFA`，加载 `policy/VFA/` 适配器：
+RoboTwin2 评测统一使用 VFA 直接推理入口，默认四卡 GPU0–3、100个固定种子，
+每卡25集，完成后严格合并结果：
 
 ```bash
-bash scripts/eval/eval_robotwin2.0_parallel.sh \
-  VFA beat_block_hammer agilex_config /absolute/path/to/checkpoint 100 2 42
+bash scripts/eval/eval_robotwin.sh \
+  --checkpoint /absolute/path/to/checkpoint \
+  --gpus 0 1 2 3 --episodes 100 --nfe 10
 ```
 
-使用 `VFA_NFE` 覆盖 VFA 的积分次数；`VFA_JPEG_ROUNDTRIP` 控制该适配器的 JPEG 输入对齐。
-基线继续使用 `RTPolicy` 策略名及其原有环境变量。
+加 `--dry-run` 先检查配置与种子分组。仿真和 VFA 在同一环境、同一进程运行；
+环境、资产、结果目录和先导验证见 [RoboTwin 平台说明](../simulation/robotwin2.0/README.md)。
 
 ## 数据准备
 

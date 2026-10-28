@@ -67,14 +67,34 @@ cd ../..
 
 ## 4. 单集验证与四卡评测
 
+统一使用仓库根目录的 `scripts/eval/eval_robotwin.sh`，默认 GPU0–3、
+100 个固定种子，每卡25集。执行链路：
+
+| 文件 | 职责 |
+|---|---|
+| `scripts/eval/eval_robotwin.sh` | 选择仿真环境、设置无窗口运行参数、启动评测 |
+| `policy/VFA/evaluate.py`（本平台目录内） | 拆分固定种子，每卡启动一个进程，严格合并结果 |
+| `script/eval_policy.py`（本平台目录内） | 单卡逐集仿真，在同一进程直接调用 VFA |
+
+从 VFA 仓库根目录运行：
+
 ```bash
+# 单卡单集先导；省略 --nfe 时默认4步。
 bash scripts/eval/eval_robotwin.sh \
-  --checkpoint /absolute/path/to/checkpoint-30000 \
+  --checkpoint /absolute/path/to/checkpoint \
   --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/my_pilot \
   --gpus 0 --episodes 1
-# 四卡各25集：改成 --gpus 0 1 2 3 --episodes 100
-# 加 --dry-run 只检查配置和种子拆分，不启动 GPU。
+
+# 四卡各25集；此例显式使用10步均匀 Euler。
+bash scripts/eval/eval_robotwin.sh \
+  --checkpoint /absolute/path/to/checkpoint \
+  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/my_eval_100 \
+  --gpus 0 1 2 3 --episodes 100 --nfe 10
 ```
+
+加 `--dry-run` 只打印配置、种子分组和输出目录，不启动 GPU 评测。
+默认种子文件为 `task_config/seedlists/blocks_ranking_rgb_demo_clean.txt`；
+同条件对比应使用相同 checkpoint 选择规则、种子列表和 NFE。
 
 默认任务 `blocks_ranking_rgb/demo_clean`，默认四步均匀推理；可用 `--task`、
 `--task-config`、`--seed-list`、`--nfe` 指定。Base/EfficientViT 根据

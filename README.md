@@ -154,8 +154,9 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
 
 - [开环评测](scripts/openloop_eval/README.md)：直接调用 VFA，无服务器；离线 BGR→RGB，
   输出逐关节 GT / 预测 chunk 曲线、原始预测和误差。
-- [RoboTwin 闭环评测](simulation/robotwin2.0/README.md)：独立安装仿真环境与共享/下载资产，
-  同进程直接推理，默认四步均匀 Euler，`--nfe 10` 可改为十步。
+- [RoboTwin 闭环评测](simulation/robotwin2.0/README.md)：统一入口为
+  `scripts/eval/eval_robotwin.sh`，默认 GPU0–3 四卡、100个固定种子、每卡25集，
+  完整检查后合并结果。同进程直接推理，默认四步均匀 Euler，`--nfe 10` 可改为十步。
 - 保存后严格重载并验证有限动作：`PYTHONPATH=src .venv/bin/python tools/check_policy_checkpoint.py /path/to/checkpoint`。
 
 CPU 测试：
