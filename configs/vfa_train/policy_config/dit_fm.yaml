@@ -73,7 +73,7 @@ val_period: 5000 # -1 to disable validation during training
 
 # ------------------------------- model config
 horizon: 8
-n_obs_steps: 3        # state history length
+n_obs_steps: 1        # current state only; no observation history
 n_image_obs_steps: 1  # image history length
 obs_image_frame_indices: ${eval:'ListConfig(list(range(${n_obs_steps}-${n_image_obs_steps}, ${n_obs_steps})))'}
 n_action_steps: ${eval:'${horizon}-${n_obs_steps}'}
