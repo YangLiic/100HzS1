@@ -1,0 +1,23 @@
+# @package _global_
+train_dataset:
+  task: null
+  demo: null
+  _target_: rtpolicy.datasets.builder.build_dataset
+  backend: lerobot
+  root: datasets/drrm_robotwin2.0_D435_Agilex_200_rgb
+  repo_id: D-robotics/drrm_robotwin2.0_D435_Agilex_200_rgb
+  task_list:
+    - ${train_dataset.task}
+  horizon: ${horizon}
+  obs_image_frame_indices: ${obs_image_frame_indices}
+  pad_before: ${n_obs_steps}
+  rgb_key: ${oc.select:model.obs_encoder.rgb_key,head_cam}
+  pad_after: 3
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: ${train_dataset.demo}
+  npy_feature_keys: null
+  dataset_metadata:
+    _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata
+    root: ${train_dataset.root}
+    repo_id: ${train_dataset.repo_id}

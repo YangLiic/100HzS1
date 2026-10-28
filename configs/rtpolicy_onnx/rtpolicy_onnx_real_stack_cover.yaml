@@ -1,0 +1,91 @@
+# @package _global_
+
+defaults:
+  - /rtpolicy_train/research/ar5_cnnb_3v_aa_adapter_bs256_h48_30k_real@_here_
+  - _self_
+
+# --------------------------- ONNX export config (real_stack_cover_148, 4 FM steps)
+_target_: rtpolicy.trainer.onnx.onnx
+
+# Export source checkpoint and output path. Override both at launch time.
+checkpoint_dir: null
+onnx_path: null
+
+# Export runtime options.
+device: cpu
+export_dtype: fp32  # fp32 | fp16  (override on CLI; fp16 requires device=cuda)
+batch_size: 1
+dynamic_batch: false
+opset_version: 19
+use_external_data: true
+external_data_filename: null
+external_data_size_threshold: 1024
+# Keep the runnable ONNX compact enough for Netron by exporting the repeated
+# diffusion model calls as ONNX local functions.
+export_modules_as_functions: false
+save_netron_model: false
+netron_model_path: null
+optimize: false
+report: false
+export_target: policy  # policy | dinov3cnn | visual_encoder
+image_preprocess_in_onnx: true  # true: ONNX accepts raw decoded RGB tensors and runs resize/crop/normalize internally
+
+# FM inference step count baked into the ONNX (diffusion loop unrolled N times).
+# null keeps the checkpoint config.json value (here 4).
+num_inference_timesteps: null
+
+# Verification: torch vs onnxruntime cross-check on calibration/dummy inputs.
+verify: true
+fail_on_verify_mismatch: true
+rtol: 1e-4
+atol: 1e-4
+
+# Save calibration data under ${checkpoint_dir}/onnx_calibration by default.
+save_calibration_data: false
+calibration_data_dir: null
+num_calibration_samples: 100
+prefer_validation_dataset: true
+seed: 0
+
+# config.json's backbone_path is a valid relative path
+# (pretrained/dinov3-cnn-base), resolved against the repo root, so no override
+# is needed.
+backbone_path: null
+
+# Aligned with the checkpoint config.json (weights/structure come from
+# checkpoint_dir/config.json; these only satisfy base-config interpolation).
+horizon: 48
+n_obs_steps: 3
+
+# Dataset identity for calibration. path/task null -> deterministic dummy inputs.
+# Fill in the real_stack_cover dataset here to calibrate on real data.
+train_dataset:
+  task: null
+  demo: null
+  path: null
+
+# Notes:
+# 1. Model weights and structure are read from checkpoint_dir/config.json.
+#    This checkpoint: 3 views (left/right/head), dinov3-cnn-base backbone,
+#    n_obs_steps=3 (state), n_image_obs_steps=1 (images use last frame),
+#    action_key=state, supervision_key=action.
+# 2. `num_inference_timesteps` overrides the checkpoint's
+#    `noise_scheduler.num_inference_timesteps` at export time; the FM loop is
+#    unrolled that many times into the graph. Re-export when it changes.
+# 3. Base config only supplies the train_dataset/calibration scaffolding.
+
+# --- fp32 export ---
+# python main.py \
+#   --config-path=configs \
+#   --config-name=rtpolicy_onnx/rtpolicy_onnx_real_stack_cover \
+#   checkpoint_dir=/data/efs/datasets/xianbao01.hou/research_checkpoints_steps/real_stack_cover_148/ar5_cnnb_3v_aa_adapter_bs256_h48_30k \
+#   onnx_path=/data/efs/datasets/xianbao01.hou/research_checkpoints_steps/real_stack_cover_148/ar5_cnnb_3v_aa_adapter_bs256_h48_30k/model_test.onnx
+
+# --- fp16 export (needs GPU) ---
+# python main.py \
+#   --config-path=configs \
+#   --config-name=rtpolicy_onnx/rtpolicy_onnx_real_stack_cover \
+#   checkpoint_dir=<ckpt_dir> \
+#   onnx_path=<out>.onnx \
+#   export_dtype=fp16 \
+#   device=cuda
