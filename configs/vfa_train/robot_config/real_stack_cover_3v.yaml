@@ -1,0 +1,27 @@
+# @package _global_
+# Real-robot stack_and_cover_480: 3 cameras (head + both wrists) 480x640, state/action 16-dim
+# Dataset-native keys (observation.state / observation.images.*) are mapped to standard short names via the dataset key_alias
+image_shape: [3, 480, 640]
+shape_meta:
+  obs:
+    left_cam:
+      shape: ${image_shape}
+      type: rgb
+    right_cam:
+      shape: ${image_shape}
+      type: rgb
+    head_cam:
+      shape: ${image_shape}
+      type: rgb
+    state:
+      shape: [16]
+      type: low_dim
+  action:
+    state:
+      shape: [16]
+    delta_state:
+      shape: [16]
+    endpose:
+      shape: [14]
+    delta_endpose:
+      shape: [14]

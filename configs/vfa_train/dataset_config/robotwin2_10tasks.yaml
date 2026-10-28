@@ -1,0 +1,33 @@
+# @package _global_
+train_dataset:
+  task: null
+  demo: null
+  _target_: vfa.datasets.builder.build_dataset
+  backend: lerobot
+  root: datasets/drrm_robotwin2.0_D435_Agilex_200_rgb
+  repo_id: D-robotics/drrm_robotwin2.0_D435_Agilex_200_rgb
+  task_list: [
+    place_a2b_left,
+    stack_blocks_two,
+    open_laptop,
+    move_stapler_pad,
+    press_stapler,
+    adjust_bottle,
+    click_bell,
+    place_can_basket,
+    place_fan,
+    place_phone_stand
+  ]
+  horizon: ${horizon}
+  obs_image_frame_indices: ${obs_image_frame_indices}
+  pad_before: ${n_obs_steps}
+  rgb_key: ${oc.select:model.obs_encoder.rgb_key,head_cam}
+  pad_after: 3
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: ${train_dataset.demo}
+  npy_feature_keys: null
+  dataset_metadata:
+    _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata
+    root: ${train_dataset.root}
+    repo_id: ${train_dataset.repo_id}

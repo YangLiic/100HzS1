@@ -1,0 +1,19 @@
+# @package _global_
+image_shape: [3, 480, 640]
+shape_meta:
+  # acceptable types: rgb, low_dim
+  obs:
+    left_cam:
+      shape: ${image_shape}
+      type: rgb
+    right_cam:
+      shape: ${image_shape}
+      type: rgb
+    head_cam:
+      shape: ${image_shape}
+      type: rgb
+    state:
+      shape: [14]
+      type: low_dim
+  action:
+    shape: [14]

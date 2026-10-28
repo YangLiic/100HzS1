@@ -1,0 +1,15 @@
+defaults:
+  - policy_config/dit_fm
+  - robot_config/robotwin2_agilex_3v
+  - dataset_config/demo_separated_dataset
+  - observation_config/dinov3cnnl_3v
+  - _self_
+
+
+# val_period: -1 # -1 to disable validation during training
+
+n_obs_steps: 1
+train_batch_size: 256
+optimizer:
+  lr: 2e-4
+output_dir: checkpoints/vfa/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnl_3v_bs256

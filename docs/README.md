@@ -1,11 +1,37 @@
 # VFA 运行说明
 
-使用 `python -m pip install -e .` 安装；Python 源码包名暂时保留为 `rtpolicy`。
-源码位于 `src/rtpolicy/`，后续 VFA 实现放在 `src/vfa/`；安装后仍使用 `import rtpolicy` 或 `import vfa`，无需在导入路径中添加 `src`。
+使用 `python -m pip install -e .` 安装，同时提供 `rtpolicy` 和 `vfa` 两个 Python 包。
+`src/rtpolicy/` 保留 RTPolicy 基线，`src/vfa/` 是独立的 VFA 开发副本；安装后使用 `import rtpolicy` 或 `import vfa`，无需在导入路径中添加 `src`。
 移动目录或切换布局后，请在使用的 Python 环境中重新执行开发模式安装。
 本分支仅包含运行代码和配置；数据集、预训练权重、checkpoint、RobotWin2 资产需单独准备。
 
 训练性能优化的定位思路、实测结果和640配置见[性能优化笔记](performance_optimization.md)。
+
+## 基线与 VFA 入口
+
+RTPolicy 基线使用 `configs/rtpolicy_train/`；VFA 使用 `configs/vfa_train/`。
+VFA 的策略类为 `vfa.models.VFADitFlowMatching`，数据集和训练器同样从 `vfa` 包加载。
+VFA 配置将训练输出写入 `checkpoints/vfa/`，与基线输出分开。
+
+先检查训练配置，再补充实际数据路径运行：
+
+```bash
+python main.py --config-path=configs/vfa_train \
+  --config-name=dit_fm_dinov3cnnb_3v_lance_real640_bs256 --cfg job
+```
+
+VFA ONNX 导出入口为 `python -m vfa.trainer.onnx`，对应配置位于 `configs/vfa_onnx/`。
+通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_vfa.py` 提供 VFA 的历史缓冲示例。
+
+RoboTwin2 评测时将策略名设为 `VFA`，加载 `policy/VFA/` 适配器：
+
+```bash
+bash scripts/eval/eval_robotwin2.0_parallel.sh \
+  VFA beat_block_hammer agilex_config /absolute/path/to/checkpoint 100 2 42
+```
+
+使用 `VFA_NFE` 覆盖 VFA 的积分次数；`VFA_JPEG_ROUNDTRIP` 控制该适配器的 JPEG 输入对齐。
+基线继续使用 `RTPolicy` 策略名及其原有环境变量。
 
 ## 数据准备
 
@@ -191,10 +217,29 @@ NVDEC 会在相邻查询相隔超过 0.25 秒时重新 seek，减少随机 batch
 
 ## 权重与旧 checkpoint
 
+`pretrained/` 存放外部模型权重，已被 `.gitignore` 排除；Git 不记录空目录，因此新克隆的仓库通常没有此目录。
+当前视觉分支使用 **DINOv3 ConvNeXt** 预训练权重；多视角融合、视觉压缩和 Flow Matching 动作头由操作数据训练。
+这与已经训练好的任务策略 checkpoint 是两类文件。
+
 训练时设置 `model.obs_encoder.emvis_config.backbone_path` 为 DINOv3 权重目录。
 CNN-base / CNN-large / CNN-small 的配置分别使用
 `pretrained/dinov3-cnn-base`、`pretrained/dinov3-convnext-large-pretrain-lvd1689m`、
 `pretrained/dinov3-cnn-small`；以所选 YAML 的实际字段为准。
+
+相对路径以仓库根目录为工作目录，例如 Base 配置对应 `<仓库>/pretrained/dinov3-cnn-base/`。
+可以自行创建目录并放入权重，或者通过上述配置字段指定外部权重目录的绝对路径，无需复制大文件到仓库。
+目录应采用 Transformers `from_pretrained()` 格式，包含 `config.json`、`model.safetensors`（或受支持的分片权重），
+以及 `preprocessor_config.json` 等图像处理配置。Base、Large、Small 的权重必须与所选视觉配置匹配。
+模型来源见 [DINOv3 官方仓库](https://github.com/facebookresearch/dinov3)。
+
+VFA 的读取路径会在内存中将 RTPolicy / 旧 VODPPlus 的已知类引用映射到 `vfa`，不修改原 checkpoint。
+若要永久更新一份复制出来的 checkpoint 元数据，先检查：
+
+```bash
+python tools/rename_vfa_ckpt_pkg_map.py /path/to/copied/checkpoint --dry-run
+```
+
+确认后去掉 `--dry-run`。默认只更新配置元数据，不重写权重；当前 VFA 副本与基线结构一致，后续结构改动需另行检查权重兼容性。
 
 旧 VODPPlus checkpoint 若仍使用旧策略类名，可运行：
 
