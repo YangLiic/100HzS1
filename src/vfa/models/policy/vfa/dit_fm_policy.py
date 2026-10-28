@@ -42,12 +42,6 @@ class VFADitFlowMatchingConfig(PretrainedConfig):
     # Set 'action' to keep the state condition while supervising the
     # commanded expert action.
     supervision_key: Optional[str] = None
-    obs_as_global_cond: bool = True
-    diffusion_step_embed_dim: int = 256
-    down_dims: tuple = (256,512,1024)
-    kernel_size: int = 5
-    n_groups: int = 8
-    cond_predict_scale: bool = True
     self_attn_first: bool = True
     
 
@@ -56,6 +50,8 @@ class VFADitFlowMatchingConfig(PretrainedConfig):
         
         self.auto_map = {}
         self.pkg_map = {}
+        # Keep accepting historical checkpoint fields through PretrainedConfig.
+        # Unused legacy fields are no longer advertised as model settings.
         for key, value in kwargs.items():
             setattr(self, key, value)
     
@@ -173,13 +169,6 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             out_features=hidden_size
         )
 
-        # self.mask_generator = LowdimMaskGenerator(
-        #     action_dim=action_dim,
-        #     obs_dim=0 if obs_as_global_cond else obs_feature_dim,
-        #     max_n_obs_steps=n_obs_steps,
-        #     fix_obs_steps=True,
-        #     action_visible=False
-        # )
         self.normalizer = LinearNormalizer()
         # self.normalizer = None
         self.horizon = horizon

@@ -151,6 +151,13 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
   新实验选择 `blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml`（B3 同理），
   已配置独立输出目录；窄维融合/压缩权重不兼容旧投影模式，不能原样恢复旧优化器状态。
 
+当前配置已清除未接入计算的历史字段，包括 `model.num_inference_steps`、
+`diffusion_step_embed_dim`、`down_dims`、`kernel_size`、`n_groups`、`cond_predict_scale`，
+以及调度器中的 `beta_schedule` / `prediction_type`、观察配置中的 `state_key` / `ft_layer_idx`。
+实际采样步数只由 `model.noise_scheduler.num_inference_timesteps` 控制（默认10）；
+时间频率嵌入仍使用实现默认的256维，未改变网络尺寸。
+旧 checkpoint 的历史字段继续接受，无需修改已有权重或配置 JSON。
+
 适配维度和 L4 时延结果见 [编码器说明](docs/efficientvit_backbones.md)。
 批量训练视觉编码更快不等于单次策略推理或闭环成功率更好。
 

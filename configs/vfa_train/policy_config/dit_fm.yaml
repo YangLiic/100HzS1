@@ -84,12 +84,10 @@ model:
   shape_meta: ${shape_meta}
   noise_scheduler:
     num_train_timesteps: 1000
-    num_inference_timesteps: 10
-    beta_schedule: squaredcos_cap_v2
+    num_inference_timesteps: 10  # actual flow-matching sampling steps
     noise_beta_alpha: 1.5
     noise_beta_beta: 1.0
     noise_s: 0.999
-    prediction_type: velocity
   scene_adaptor: mlp2x_gelu
   state_adaptor: mlp3x_gelu
   hidden_size: 2048
@@ -100,14 +98,6 @@ model:
   n_action_steps: ${eval:'${n_action_steps}+${n_latency_steps}'}
   n_obs_steps: ${n_obs_steps}
   n_image_obs_steps: ${n_image_obs_steps}
-  num_inference_steps: 100
-  # crop_shape: null
-  diffusion_step_embed_dim: 128
-  # down_dims: [512, 1024, 2048]
-  down_dims: [256, 512, 1024]
-  kernel_size: 5
-  n_groups: 8
-  cond_predict_scale: True
 ema:
   update_after_step: 0
   inv_gamma: 1.0

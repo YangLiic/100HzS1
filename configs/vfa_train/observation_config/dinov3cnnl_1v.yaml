@@ -1,7 +1,6 @@
 # @package _global_
 model:
   obs_encoder:
-    state_key: null
     # rgb_key: ["head_cam", "front_cam"]
     emvis_config:
       processor_config:
@@ -15,8 +14,6 @@ model:
       # interpolate: 'bilinear'
       mlp_ratio: 1.0
       drop_p: 0.0
-      ft_layer_idx: []
-      # intermediate_layer_idx: [23]
       only_first_view: True
       model_adapter_config:
         target: ResNetAdapter
