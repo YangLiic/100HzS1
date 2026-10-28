@@ -28,6 +28,7 @@ dist/
 *.npz
 /data/
 /datasets/
+/runs/
 /pretrain/
 **/pretrained
 **/pretrained/

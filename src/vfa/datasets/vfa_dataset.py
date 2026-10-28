@@ -4,7 +4,12 @@ from bisect import bisect_right
 import torch
 
 from vfa.datasets.episode_cache import LocalEpisodeCacheBackend
+from vfa.datasets.image_color import apply_bgr_to_rgb
 from vfa.datasets.shm_episode_cache import ShmEpisodeCacheClient
+from vfa.datasets.video_frame_decoder import (
+    decode_all_video_frames_pyav,
+    decode_video_frames_pyav_seek,
+)
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -202,11 +207,25 @@ class VFADataset(LeRobotDataset):
             cache_socket: str | None = None,
             cache_max_episodes: int | None = None,
             cache_report_interval: int = 1000,
+            cache_decoded_video: bool = True,
+            cache_build_num_workers: int = 8,
+            video_backend: str | None = None,
+            bgr_to_rgb: bool = False,
+            feature_key_map: dict[str, str] | None = None,
             **kwargs
         ):
         
         # Store all parameters for easy access
         self.dataset_meta = dataset_metadata
+        self.feature_key_map = dict(feature_key_map or {})
+        if len(set(self.feature_key_map.values())) != len(self.feature_key_map):
+            raise ValueError("feature_key_map must have unique target names")
+        unknown = set(self.feature_key_map) - set(dataset_metadata.features)
+        if unknown:
+            raise ValueError(f"feature_key_map contains unknown source keys: {sorted(unknown)}")
+        renamed = [self.feature_key_map.get(key, key) for key in dataset_metadata.features]
+        if len(set(renamed)) != len(renamed):
+            raise ValueError("feature_key_map collides with an existing feature name")
         self.repo_id = repo_id
         self.root = root
         self.horizon = horizon
@@ -228,12 +247,15 @@ class VFADataset(LeRobotDataset):
         self.task_index_list = task_index_list
         self.black_index = black_index
         self.detail_item = kwargs.pop('detail_item', False)
+        self.bgr_to_rgb = bool(bgr_to_rgb)
         self.cache_to_ram = cache_to_ram
         self.cache_mode = cache_mode
         self.cache_backend = cache_backend
         self.cache_socket = cache_socket
         self.cache_max_episodes = cache_max_episodes
         self.cache_report_interval = cache_report_interval
+        self.cache_decoded_video = bool(cache_decoded_video)
+        self.cache_build_num_workers = int(cache_build_num_workers)
         self._episode_cache = None
         self._episode_cache_backend = None
         self._episode_cache_hits = 0
@@ -260,7 +282,8 @@ class VFADataset(LeRobotDataset):
             repo_id=repo_id, 
             root=root, 
             episodes=episodes,
-            delta_timestamps=self.delta_timestamps
+            delta_timestamps=self.delta_timestamps,
+            video_backend=video_backend,
         )
         self.base_hf_dataset = self._create_base_hf_dataset()
         self._build_episode_cache_index()
@@ -290,7 +313,7 @@ class VFADataset(LeRobotDataset):
 
     def _is_selected_visual_key(self, key):
         rgb_key = getattr(self, "rgb_key", None)
-        return rgb_key is None or key in rgb_key
+        return rgb_key is None or key in rgb_key or self.feature_key_map.get(key, key) in rgb_key
 
     def _is_cacheable_episode_key(self, key):
         image_keys = set(getattr(self.meta, "image_keys", []))
@@ -404,6 +427,9 @@ class VFADataset(LeRobotDataset):
             static_joint_ratio_threshold=self.static_joint_ratio_threshold,
             cache_to_ram=False,
             cache_backend="local",
+            video_backend=self.video_backend,
+            bgr_to_rgb=self.bgr_to_rgb,
+            feature_key_map=copy.deepcopy(self.feature_key_map),
         )
 
     def get_static_joint_info(self):
@@ -418,19 +444,20 @@ class VFADataset(LeRobotDataset):
         if self._static_joint_info is not None:
             return self._static_joint_info
 
+        state_source_key = self._source_feature_key('state')
         if (
             self.static_joint_ratio_threshold is None
             or self.static_joint_ratio_threshold <= 0
-            or 'state' not in self.dataset_meta.names.keys()
+            or state_source_key not in self.dataset_meta.names.keys()
         ):
             self._static_joint_info = None
             return None
 
         scalar_dataset = self.base_hf_dataset.select_columns(
-            ['state', 'episode_index']
+            [state_source_key, 'episode_index']
         )
         batch = scalar_dataset[:]
-        states = np.asarray(batch['state'], dtype=np.float32)
+        states = np.asarray(batch[state_source_key], dtype=np.float32)
         episode_indices = np.asarray(batch['episode_index']).reshape(-1)
         if states.ndim != 2 or states.shape[0] != episode_indices.shape[0]:
             raise ValueError(
@@ -468,9 +495,9 @@ class VFADataset(LeRobotDataset):
         normalizer = LinearNormalizer()
         
         # Add chunk-wise delta feature normalizers
-        if 'endpose' in self.dataset_meta.names.keys():
+        if self._source_feature_key('endpose') in self.dataset_meta.names.keys():
             normalizer['delta_endpose'] = self._compute_delta_stats('delta_endpose', num_samples=1)
-        if 'state' in self.dataset_meta.names.keys():
+        if self._source_feature_key('state') in self.dataset_meta.names.keys():
             normalizer['delta_state'] = self._compute_delta_stats('delta_state', num_samples=1)
         
         # Add VGGT feature normalizers (identity)
@@ -479,13 +506,18 @@ class VFADataset(LeRobotDataset):
         
         # Add dataset feature normalizers
         for key in self.dataset_meta.names.keys():
-            if key in self.DEFAULT_KEYS:
+            # LeRobot annotation indices are metadata, not continuous model inputs.
+            if key in self.DEFAULT_KEYS or key.startswith("annotation."):
                 continue
-                
+
             feature = self.dataset_meta.features[key]
-            normalizer[key] = self._create_feature_normalizer(key, feature)
+            normalizer[self.feature_key_map.get(key, key)] = self._create_feature_normalizer(key, feature)
                 
         return normalizer
+
+    def _source_feature_key(self, model_key):
+        return next((source for source, target in self.feature_key_map.items()
+                     if target == model_key), model_key)
 
     def _compute_delta_stats(self, key, num_samples=1):
         """Compute mean, std, min, max for dynamically generated delta features.
@@ -506,7 +538,7 @@ class VFADataset(LeRobotDataset):
             f"sample_size={sample_size}/{n} (num_samples={num_samples})"
         )
         
-        base_key = key.replace('delta_', '')
+        base_key = self._source_feature_key(key.replace('delta_', ''))
         if base_key not in self.hf_dataset.column_names:
             return self._create_identity_normalizer()
         
@@ -638,11 +670,51 @@ class VFADataset(LeRobotDataset):
             if not self._is_selected_visual_key(key):
                 continue
             if query_indices is not None and key in query_indices:
-                timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
-                query_timestamps[key] = torch.stack(timestamps).tolist()
+                if self.cache_to_ram:
+                    timestamps = self._query_hf_dataset_cached({"timestamp": query_indices[key]})["timestamp"]
+                else:
+                    timestamps = torch.stack(self.hf_dataset.select(query_indices[key])["timestamp"])
+                query_timestamps[key] = timestamps.tolist()
             else:
                 query_timestamps[key] = [current_ts]
         return query_timestamps
+
+    def _query_videos(self, query_timestamps, ep_idx, query_indices=None):
+        # The master switch preserves the original LeRobot decode path for baselines.
+        if not self.cache_to_ram:
+            return super()._query_videos(query_timestamps, ep_idx)
+
+        remaining = dict(query_timestamps)
+        result = {}
+        if self.cache_decoded_video and self._episode_cache is not None:
+            for key in list(remaining):
+                indices = query_indices.get(key) if query_indices is not None else None
+                if indices is None:
+                    continue
+                frames = self._get_cached_video_frames(key, indices, ep_idx)
+                if frames is not None:
+                    result[key] = frames
+                    del remaining[key]
+
+        # Uncached episodes/views use the same bounded-thread PyAV seek as VODPP.
+        for key, timestamps in remaining.items():
+            path = self.root / self.meta.get_video_file_path(int(ep_idx), key)
+            result[key] = decode_video_frames_pyav_seek(path, timestamps, self.tolerance_s).squeeze(0)
+        return result
+
+    def _get_cached_video_frames(self, key, indices, ep_idx):
+        if self.cache_backend == "shm":
+            try:
+                frames = self._episode_cache_backend.get_rows({key: indices})[key]
+            except KeyError:
+                return None
+        else:
+            episode = self._get_cached_episode(ep_idx)
+            if episode is None or key not in episode["rows"]:
+                return None
+            frames = [episode["rows"][key][int(i) - episode["start"]] for i in indices]
+        # VFA expects float RGB in [0, 1], including before image transforms.
+        return torch.stack(frames).to(torch.float32).div_(255).squeeze(0)
     
     def _query_npy_frame(self, query_indices, ep_idx):
         """Load npy features from numpy files"""
@@ -770,7 +842,9 @@ class VFADataset(LeRobotDataset):
             self._build_episode_cache_index()
         if self.cache_backend == "shm":
             if not self.cache_socket:
-                raise ValueError("cache_socket is required when cache_backend=shm")
+                from vfa.datasets.managed_episode_cache import ensure_episode_cache
+
+                self.cache_socket = ensure_episode_cache(self)
             self._episode_cache_backend = ShmEpisodeCacheClient(self.cache_socket)
             self._episode_cache = self._episode_cache_backend
             return
@@ -795,6 +869,12 @@ class VFADataset(LeRobotDataset):
         start, end = self._episode_ranges[int(ep_idx)]
         indices = list(range(start, end))
         rows = self._filter_episode_cache_rows(self.hf_dataset[indices])
+        if self.cache_decoded_video:
+            for key in getattr(self.meta, "video_keys", []):
+                if self._is_selected_visual_key(key):
+                    path = self.root / self.meta.get_video_file_path(int(ep_idx), key)
+                    frames = decode_all_video_frames_pyav(path, expected_num_frames=end - start)
+                    rows[key] = list(frames.unbind(0))
         return {"start": start, "end": end, "rows": rows}
 
     def _in_dataloader_worker(self):
@@ -814,7 +894,7 @@ class VFADataset(LeRobotDataset):
     def _row_from_episode(self, episode, idx, include_images=True):
         local_idx = int(idx) - int(episode["start"])
         rows = episode["rows"]
-        image_keys = set(getattr(self.meta, "image_keys", []))
+        image_keys = set(getattr(self.meta, "camera_keys", []))
         return {
             key: values[local_idx]
             for key, values in rows.items()
@@ -830,7 +910,7 @@ class VFADataset(LeRobotDataset):
                 return self._episode_cache_backend.get_row(
                     idx,
                     include_images=include_images,
-                    image_keys=getattr(self.meta, "image_keys", []),
+                    image_keys=getattr(self.meta, "camera_keys", []),
                 )
             except KeyError:
                 return self.hf_dataset[int(idx)]
@@ -848,7 +928,7 @@ class VFADataset(LeRobotDataset):
                 return self._episode_cache_backend.get_row(
                     idx,
                     include_images=False,
-                    image_keys=getattr(self.meta, "image_keys", []),
+                    image_keys=getattr(self.meta, "camera_keys", []),
                 )
             except KeyError:
                 return self.base_hf_dataset[int(idx)]
@@ -923,7 +1003,7 @@ class VFADataset(LeRobotDataset):
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
+            video_frames = self._query_videos(query_timestamps, ep_idx, query_indices=query_indices)
             for key in self.meta.video_keys:
                 if key in video_frames:
                     feature_shape = self.dataset_meta.features[key]["shape"]
@@ -931,6 +1011,11 @@ class VFADataset(LeRobotDataset):
                         # LeRobot squeezes the temporal axis for a single queried video frame.
                         video_frames[key] = video_frames[key].unsqueeze(0)
             item.update(video_frames)
+
+        # Correct source color once, after every decode/cache path and before transforms.
+        # This replaces tensors rather than mutating the shared cached frames.
+        if self.bgr_to_rgb:
+            apply_bgr_to_rgb(item, self.meta.camera_keys)
 
         # Apply image transforms
         if self.image_transforms is not None:
@@ -941,6 +1026,10 @@ class VFADataset(LeRobotDataset):
         # Add task string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
+
+        # Keep source names through video queries, cache reads and color transforms.
+        # Rename only the sample presented to the policy; cache storage stays raw.
+        item = {self.feature_key_map.get(key, key): value for key, value in item.items()}
 
         # Calculate chunk-wise deltas for continuous control features
         if 'endpose' in item:
@@ -974,9 +1063,9 @@ class VFADataset(LeRobotDataset):
         if not self.detail_item:
             filter_keys.update(self.DEFAULT_KEYS)
             
-        valid_keys = {*self.npy_feature_keys, *self.dataset_meta.names.keys(), 'delta_endpose', 'delta_state'}
+        valid_keys = {*self.npy_feature_keys, *(self.feature_key_map.get(key, key) for key in self.dataset_meta.names), 'delta_endpose', 'delta_state'}
         for key in item:
-            if key in valid_keys and key not in {*filter_keys, 'action'}:
+            if key in valid_keys and key not in {*filter_keys, 'action'} and not key.startswith('annotation.'):
                 data['obs'][key] = item[key]
                 
         return data

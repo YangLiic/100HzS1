@@ -30,4 +30,4 @@ train_dataset:
   image_cache_size_bytes: 0
   video_cache_size_bytes: 0
 
-output_dir: checkpoints/vfa/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnb_3v_lance_real640_bs256
+output_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnb_3v_lance_real640_bs256

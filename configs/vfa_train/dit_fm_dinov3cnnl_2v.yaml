@@ -6,4 +6,4 @@ defaults:
   - _self_
 
 n_obs_steps: 1
-output_dir: checkpoints/vfa/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnl_2v
+output_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnl_2v

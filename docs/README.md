@@ -11,7 +11,8 @@
 
 RTPolicy 基线使用 `configs/rtpolicy_train/`；VFA 使用 `configs/vfa_train/`。
 VFA 的策略类为 `vfa.models.VFADitFlowMatching`，数据集和训练器同样从 `vfa` 包加载。
-VFA 配置将训练输出写入 `checkpoints/vfa/`，与基线输出分开。
+VFA 配置将训练输出默认写入 `/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/`，
+由统一的 `checkpoint_root` 配置项控制；任务名、demo 数和训练配方继续作为子目录。
 
 先检查训练配置，再补充实际数据路径运行：
 
@@ -19,6 +20,22 @@ VFA 配置将训练输出写入 `checkpoints/vfa/`，与基线输出分开。
 python main.py --config-path=configs/vfa_train \
   --config-name=dit_fm_dinov3cnnb_3v_lance_real640_bs256 --cfg job
 ```
+
+通用训练入口为 `scripts/train/train.sh`（`train` 为正确拼写），例如：
+
+```bash
+NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
+  configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml \
+  train_dataset.path=/absolute/path/to/dataset_parent \
+  train_dataset.task=adjust_bottle train_dataset.demo=100
+```
+
+默认按所选/可见 GPU 数启动，支持单卡和单机多卡；`CONFIG_PATH` 可替代位置参数。
+`--dry-run` 只打印命令；`--help` 查看参数。
+LeRobot episode 共享缓存由数据集自动管理，关闭时追加 `train_dataset.cache_to_ram=false`。
+可通过 `CHECKPOINT_ROOT=/another/root` 或 `checkpoint_root=/another/root` 覆盖 checkpoint 根目录，
+也可显式指定 `output_dir=/absolute/run/path`。
+启动前可用 `python main.py ... --cfg job --resolve` 检查最终配置，不会开始训练。
 
 VFA ONNX 导出入口为 `python -m vfa.trainer.onnx`，对应配置位于 `configs/vfa_onnx/`。
 通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_vfa.py` 提供 VFA 的历史缓冲示例。
@@ -97,6 +114,58 @@ python tools/repack_lance_jpeg.py \
 `--staging-dir` 指向能够执行原子 rename、且能容纳完整产物的本地盘；
 未指定时使用 `TMPDIR` 或 `/tmp`。大数据集需预留完整产物所需空间。
 v2 数据需要先升级到 v3，本脚本对其他版本会给出明确错误。
+
+## LeRobot episode 共享缓存
+
+`configs/vfa_train/dataset_config/` 的训练配置默认开启 `cache_to_ram: true`、
+`cache_backend: shm` 和 `cache_decoded_video: true`。只需通过
+`train_dataset.cache_to_ram=false` 即可恢复原来的数值表读取、时间戳查询和
+LeRobot 按需视频解码路径，用于基线测量。
+
+开启时，首次创建数据集会自动建立训练节点本地的 memfd 共享缓存；同一作业的
+各 rank 和 DataLoader worker 使用同一份，进程退出时自动清理，无需另外运行 shell 脚本。
+`cache_socket: null` 使用自动管理；显式指定 socket 时连接已启动的外部缓存服务。
+视频按所选相机和训练 episodes 顺序解码一次，以原始分辨率 uint8 RGB 缓存，
+训练取帧时转为 float32 `[0, 1]`，保持观测历史、图像变换及模型输入格式。
+缓存未命中的 episode 使用 VODPP 的 PyAV seek 路径，解码线程数为 2；时间戳优先从数值缓存读取。
+
+共享缓存消耗 CPU 内存，不会把解码视频写入 HF Arrow 缓存或持久化磁盘。
+图像部分的内存约为 `训练帧数 × 相机数 × H × W × 3` 字节，另需预留解码和预取内存。
+`train_dataset.cache_max_episodes=N` 可限制缓存 episode 数，其他 episode 仍按需读取；
+`train_dataset.cache_build_num_workers=8` 控制构建并发。
+单独设置 `train_dataset.cache_decoded_video=false` 可保留数值共享缓存并按需解码视频。
+验证集保持原始加载路径，Lance 后端继续使用自身的读取与解码器缓存。
+
+## 数据源颜色：BGR → RGB
+
+颜色修正用独立参数 `train_dataset.bgr_to_rgb` 控制，通用配置默认 `false`。
+RoboTwin 专用的 `dataset_config/robotwin2_10tasks.yaml` 和
+`dataset_config/robotwin2_singletask.yaml` 默认设为 `true`；
+`demo_separated_dataset.yaml`、`demo_unified_dataset.yaml` 及代码默认值保持 `false`。
+若 RoboTwin 数据已转换为 RGB，应显式覆盖 `train_dataset.bgr_to_rgb=false`。
+已知 BGR 数据集
+`/DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14`
+训练时应使用 `bgr_to_rgb=true`；使用上述 RoboTwin 专用配置时已默认开启，使用通用配置时需显式设置。不要根据目录名或 MP4 的标准 RGB 解码格式自动判断内容语义。
+
+处理顺序是：视频解码/缓存取帧 → BGR→RGB（如开启）→ 图像变换 → 模型输入。
+共享缓存保留源通道数据，取样时创建转换后的张量，不会原地修改缓存或重复翻转；
+训练和验证沿用相同颜色设置。LeRobot 与 Lance 后端均支持此参数。
+关闭 `cache_to_ram` 只关闭性能优化，**不会关闭颜色修正**；BGR 数据的基线测量仍应 `bgr_to_rgb=true`。
+RoboTwin 在线 SAPIEN 观测是 RGB，不要把离线数据修正开关套到闭环推理上。
+
+此数据集还使用 `observation.state`、`observation.images.head/left/right` 等字段，
+与现有 `state`、`head_cam/left_cam/right_cam` 配置不同。只开启颜色转换并不完成微调的数据字段适配。
+
+LeRobot video 的开关关系：
+
+| 参数 | 作用 |
+| --- | --- |
+| `cache_to_ram=false` | 不建立 episode 缓存，原始 HF 时间戳查询和 LeRobot 按需解码；`cache_decoded_video` 不生效 |
+| `cache_to_ram=true, cache_decoded_video=false` | 数值缓存、缓存时间戳查询、优化 PyAV 按需解码 |
+| `cache_to_ram=true, cache_decoded_video=true` | 同上，并缓存解码后的视频帧；未命中仍按需解码 |
+| `bgr_to_rgb=true` | 在以上任一模式下独立执行源颜色修正 |
+
+上述缓存开关都不控制 HF Arrow 磁盘缓存。
 
 ## Lance 后端
 
@@ -214,6 +283,41 @@ NVDEC 会在相邻查询相隔超过 0.25 秒时重新 seek，减少随机 batch
 放在同一台机器的本地盘上。
 
 历史测速、回归脚本及原始结果已移至 [EFS实验归档](/data/efs/datasets/xianbao01.hou/rtpolicy_archives/20261016_071211/README.md)；正式训练配置和优化方法见[性能优化笔记](performance_optimization.md)。
+
+## RoboTwin joint14 单任务训练
+
+每个实验建立独立的顶层 YAML，组合公共 policy、robot、dataset 和 observation 配置，
+再将文件路径传给通用入口。例如在 8 张 L4 的训练节点上运行：
+
+```bash
+cd /data/vepfs/licheng.yang/VFA
+NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 bash scripts/train/train.sh \
+  configs/vfa_train/blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4.yaml
+```
+
+该配方沿用 VODPP 的总 batch 128、64 workers、200 epochs、AdamW 1e-4；
+VFA 使用三帧状态历史、每视角最新一帧图像、horizon 8。
+`dinov3cnnl` 对应 ConvNeXt-Large（1536 维），`dinov3cnnl_3v_cnn_b` 才是 Base（1024 维）。
+视觉骨干加载预训练权重并冻结；未指定任务策略 checkpoint 时，动作头和适配层重新训练。
+若需要从已有策略继续学习，可显式设置 `+checkpoint_dir=/absolute/policy/path`；
+`resume_from_checkpoint` 用于恢复本次训练的优化器、步数等完整状态。
+
+此数据的 `observation.state` 和三路 `observation.images.{left,right,head}`
+通过 `train_dataset.feature_key_map` 映射到 `state`、`left_cam`、`right_cam`、`head_cam`。
+映射在原始缓存读取和颜色转换后生效；验证集沿用同一映射。
+`model.action_key=state` 使用测量状态作为条件，`model.supervision_key=action`
+使用数据集 `action` 列作为监督目标，两者分别从训练集数值计算归一化统计。
+`annotation.*` 是任务标注索引，不进入连续状态归一化或模型输入。
+
+离线 joint14 数据虽然目录带 `_rgb`，内容仍按 BGR 处理，`bgr_to_rgb=true`。
+正式训练的 `cache_to_ram=true、cache_decoded_video=true、cache_backend=shm`
+将原始数值和 uint8 视频帧缓存在训练节点内存，同一节点的 ranks/workers 共享。
+`cache_to_ram=true、cache_decoded_video=false` 仍使用数值缓存、时间戳缓存和优化的 PyAV 按需解码；
+`cache_to_ram=false` 才退回原始 LeRobot 读取路径。颜色转换独立于这些开关。
+
+该实验权重和日志位于
+`/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/dinov3cnnb_3v_8gpu_L4_20261028`。
+云端 task 先执行两步 8 卡试跑（含验证和保存），通过后进入正式训练；保留配置和源码快照。
 
 ## 权重与旧 checkpoint
 

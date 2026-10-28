@@ -25,6 +25,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.io import ImageReadMode, decode_jpeg
 
+from vfa.datasets.image_color import apply_bgr_to_rgb
 from vfa.common.normalizer import LinearNormalizer
 from vfa.common.normalize_util import (
     get_identity_normalizer_from_stat,
@@ -489,10 +490,12 @@ class VFADataset(Dataset):
         video_read_buffer_size: int = 1024 * 1024,
         video_io_backend: str = "lance",
         pin_memory: bool | None = None,
+        bgr_to_rgb: bool = False,
         **kwargs,
     ):
         super().__init__()
 
+        self.bgr_to_rgb = bool(bgr_to_rgb)
         self.repo_id = repo_id
         self.root = root
         self.horizon = horizon
@@ -700,6 +703,7 @@ class VFADataset(Dataset):
             video_io_backend=self.video_io_backend,
             pin_memory=self.pin_memory,
             detail_item=self.detail_item,
+            bgr_to_rgb=self.bgr_to_rgb,
         )
         if self.image_cache_size_bytes:
             validation._reader._image_table = self._reader._image_table
@@ -825,6 +829,8 @@ class VFADataset(Dataset):
         return items
 
     def _postprocess_item(self, item):
+        if self.bgr_to_rgb:
+            apply_bgr_to_rgb(item, self.meta.camera_keys)
         if "endpose" in item:
             item["delta_endpose"] = item["endpose"] - item["endpose"][0:1]
             item["delta_endpose"][0:1] = item["endpose"][0:1]

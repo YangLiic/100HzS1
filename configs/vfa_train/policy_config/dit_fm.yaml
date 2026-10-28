@@ -12,7 +12,8 @@ mixed_precision: "bf16" # "no", "fp16", "bf16"
 # Use `"all"` to report to all integrations.
 report_to: "wandb"
 # The output directory where the model predictions and checkpoints will be written.
-base_dir: checkpoints/vfa/${train_dataset.task}_${train_dataset.demo}/dit_fm
+checkpoint_root: /DRoboticsAILab/users/licheng.yang/checkpoints/VFA
+base_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/dit_fm
 output_dir: ${base_dir}
 # [TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
 logging_dir: logs

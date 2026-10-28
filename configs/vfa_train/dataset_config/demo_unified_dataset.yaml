@@ -5,6 +5,9 @@ train_dataset:
   path: null
   _target_: vfa.datasets.builder.build_dataset
   backend: lerobot
+  # Source color correction is independent of the performance/cache switches.
+  # Set true for robotwin2.0_lerobot_clean_joint14, including uncached baselines.
+  bgr_to_rgb: false
   root: ${train_dataset.path}
   repo_id: ${train_dataset.path}
   task_list:
@@ -17,6 +20,15 @@ train_dataset:
   seed: 42
   val_ratio: 0.02
   max_train_episodes: ${train_dataset.demo}
+  # LeRobot cache switch. false restores the original loading/decode baseline.
+  cache_to_ram: true
+  cache_backend: shm
+  cache_mode: eager
+  cache_socket: null
+  # Video-frame cache sub-switch; ignored when cache_to_ram=false.
+  cache_decoded_video: true
+  cache_build_num_workers: 8
+  cache_max_episodes: null
   npy_feature_keys: null
   dataset_metadata:
     _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata

@@ -9,6 +9,7 @@ import socketserver
 import struct
 import threading
 import time
+from collections import deque
 from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -245,11 +246,22 @@ class ShmEpisodeCacheBuilder:
                 yield count, ep_idx, self.dataset._load_episode_to_ram(ep_idx)
             return
         with ThreadPoolExecutor(max_workers=self.build_num_workers) as executor:
-            for count, (ep_idx, episode) in enumerate(
-                zip(remaining, executor.map(self.dataset._load_episode_to_ram, remaining)),
-                start=2,
-            ):
-                yield count, ep_idx, episode
+            # Executor.map eagerly retains completed episodes behind a slow
+            # earlier one. Bound outstanding decoded episodes to the worker count.
+            pending = deque()
+            episodes = iter(remaining)
+            for ep_idx in episodes:
+                pending.append((ep_idx, executor.submit(self.dataset._load_episode_to_ram, ep_idx)))
+                if len(pending) == self.build_num_workers:
+                    break
+            count = 2
+            while pending:
+                ep_idx, future = pending.popleft()
+                yield count, ep_idx, future.result()
+                count += 1
+                next_ep = next(episodes, None)
+                if next_ep is not None:
+                    pending.append((next_ep, executor.submit(self.dataset._load_episode_to_ram, next_ep)))
 
     def build(self):
         start_time = time.monotonic()
@@ -310,6 +322,10 @@ class ShmEpisodeCacheClient:
         self.metadata = None
         self.store = None
 
+    def __getstate__(self):
+        # Spawn workers reconnect via the socket instead of pickling an mmap.
+        return {**self.__dict__, "fd": None, "mm": None, "store": None}
+
     def _request(self, message):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(self.timeout)
@@ -360,13 +376,13 @@ class ShmEpisodeCacheClient:
         return self._request({"cmd": "stop"})
 
     def close(self):
+        self.store = None
         if self.mm is not None:
             self.mm.close()
             self.mm = None
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
-        self.store = None
 
 
 class _ThreadingUnixStreamServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):

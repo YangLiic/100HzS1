@@ -8,4 +8,4 @@ defaults:
 
 # val_period: -1 # -1 to disable validation during training
 n_obs_steps: 1
-output_dir: checkpoints/vfa/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnl_3v
+output_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/dit_fm_dinov3cnnl_3v
