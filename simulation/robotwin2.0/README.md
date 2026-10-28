@@ -148,3 +148,18 @@ checkpoint 的 `config.json` 恢复结构，使用同一入口。
 只有固定种子全部跑完并严格合并后才生成根目录 `result.json`、
 `_result.txt` 和 `EVALUATION_COMPLETED`。场景检查失败不会偷偷换种子。
 不采集推理延迟。单集完成证明链路可运行，成功率应使用完整固定种子评测。
+
+### Click Alarmclock 成对评测
+
+任务名为 click_alarmclock，使用 demo_clean。独立专家筛选从 100000 开始，
+116 个候选中选出首批 100 个专家同时规划成功、任务成功的种子；
+固定列表为 task_config/seedlists/click_alarmclock_demo_clean.txt，
+同名 .expert.json 校验任务、数量及 SHA。Base 与 B2 native 共用这份列表。
+
+训练使用 configs/vfa_train/click_alarmclock_{dinov3cnnb,efficientvit_b2_native}_3v_8gpu_L4.yaml，
+单帧观测、horizon24、23 个未来绝对关节动作。评测显式传 --task click_alarmclock
+--task-config demo_clean --nfe 10 --gpus 0 1 2 3 --episodes 100，分别指定各自最终主模型。
+在线 RGB 不翻转，不能用旧 blocks_ranking_rgb 种子列表代替。
+
+无法找到专家接近姿态时，VFA 自有任务脚本标记 plan_success=False 并返回，
+由筛选器按专家失败处理；不修改有效场景动作或成功判据。

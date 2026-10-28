@@ -1,0 +1,58 @@
+{
+  "verified": true,
+  "task": "click_alarmclock",
+  "task_config": "demo_clean",
+  "count": 100,
+  "candidate_count": 116,
+  "rejected_seeds": [
+    100001,
+    100005,
+    100006,
+    100017,
+    100033,
+    100035,
+    100043,
+    100044,
+    100050,
+    100065,
+    100076,
+    100078,
+    100081,
+    100091,
+    100099,
+    100106
+  ],
+  "seed_sha256": "2735ce1d640d5ece5ae254e011f234a8902da62f0fe0fb791902bcb06334cb6b",
+  "selection": "first N consecutive candidates that pass expert planning AND task success",
+  "policy_checkpoint": null,
+  "settings": {
+    "task": "click_alarmclock",
+    "task_config": "demo_clean",
+    "count": 100,
+    "start_seed": 100000,
+    "max_candidates": 2000,
+    "attempts": 3
+  },
+  "runtime": {
+    "python": "/data/vepfs/licheng.yang/VFA/runs/click_alarmclock_20261028_v2/snapshot/simulation/robotwin2.0/.venv/bin/python",
+    "environment": "/data/vepfs/licheng.yang/VFA/runs/click_alarmclock_20261028_v2/snapshot/simulation/robotwin2.0/.venv",
+    "torch": "2.7.1+cu126",
+    "sapien": "3.0.0b1",
+    "gpu": "NVIDIA L4",
+    "curobo_commit": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+    "envs": "/data/vepfs/licheng.yang/VFA/runs/click_alarmclock_20261028_v2/snapshot/simulation/robotwin2.0/envs/__init__.py",
+    "curobo": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/envs/curobo/src/curobo/__init__.py"
+  },
+  "source_sha256": {
+    "script/check_expert.py": "e0943461732f9c1fb284c936ef0522a37136a6c09e368e4b085d3baf82453f45",
+    "script/expert_check.py": "9d95d91e26c4469a131e613d6d279e19d514f6da41a5239f520c15813335af28",
+    "script/eval_policy.py": "6dad42012d04245de1d040acc8572bee82917bbd7d9490fac679214ed38dc569",
+    "envs/_base_task.py": "93ed19dab6d6941e7431e0f9d7e71590b1b697d74b6cabb66be4efde363a0454",
+    "envs/robot/planner.py": "e8374a278b256f0a2b772b4d4485c0e1ecc8a8cde2685554e964f2a2f544ac1a",
+    "envs/click_alarmclock.py": "67d1aabc59094c95bea2cea0d35b9d09e8e60eceb5e793bae65587f5610a4782",
+    "task_config/demo_clean.yml": "af4fc63ce5d050c3fb224acba2221613bb6c69540762c35ee77ce50af1aca263",
+    "task_config/_camera_config.yml": "dc80a40552e0fad25d58cf0141302ceba66d22409b5091bed235ad2f10cbce7f",
+    "task_config/_embodiment_config.yml": "b0a198ff27bf6bf6b73162d2d1adafc7e73fcdf53f39943e67e40fee15bd83fa"
+  },
+  "completed_at": "2026-10-28T13:57:02.315178+00:00"
+}

@@ -46,13 +46,20 @@ class click_alarmclock(Base_Task):
         # Move the gripper above the top center of the alarm clock and close the gripper to simulate a click
         # Note: although the code structure resembles a grasp, it is used here to simulate a touch/click action
         # You can adjust API parameters to move above the top button and close the gripper (similar to grasp_actor)
+        pre_click_pose = self.get_grasp_pose(
+            self.alarm, pre_dis=0.1, contact_point_id=0, arm_tag=arm_tag
+        )
+        if pre_click_pose is None:
+            # No reachable approach: this scene is invalid for expert screening.
+            self.plan_success = False
+            return self.info
         self.move((
             ArmTag(arm_tag),
             [
                 Action(
                     arm_tag,
                     "move",
-                    self.get_grasp_pose(self.alarm, pre_dis=0.1, contact_point_id=0, arm_tag=arm_tag)[:3] +
+                    pre_click_pose[:3] +
                     [0.5, -0.5, 0.5, 0.5],
                 ),
                 Action(arm_tag, "close", target_gripper_pos=0.0),

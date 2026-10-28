@@ -188,6 +188,10 @@ PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 环境、缓存、日志、W&B 与评测输出由 `.gitignore` 排除。
 
 
+### Click Alarmclock 对比
+
+`click_alarmclock_dinov3cnnb_3v_8gpu_L4.yaml` 与 `click_alarmclock_efficientvit_b2_native_3v_8gpu_L4.yaml` 使用相同 50 集数据、单帧观测、horizon24（23 个未来动作）、三视角和冻结主干。离线数据 BGR 转 RGB，在线观测不翻转。两者评测均使用该任务专家筛选的同一 100 scene seed、最终主模型、10 步均匀 Euler。
+
 ### 推理 CUDA Graph（默认开启）
 
 安装代码的 PyTorch 策略入口默认使用 `predict_action(obs, use_cuda_graph=True, use_kv_cache=True)`。
