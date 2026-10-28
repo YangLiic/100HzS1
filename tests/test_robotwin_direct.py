@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -67,6 +68,36 @@ class TestRobotwinDirect(unittest.TestCase):
         evaluate(env, model, env.get_obs())
         self.assertEqual(model.inputs, [[0, 0, 0], [3, 4, 5]])
         self.assertEqual(model.history.stacked()["head_cam"].shape, (1, 240, 320, 3))
+
+    def test_seed_provenance_requires_valid_metadata_for_defaults(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "seeds.txt"
+            path.write_text("100000\n100002\n")
+            with self.assertRaises(FileNotFoundError):
+                launcher.seed_provenance(path, "blocks_ranking_rgb", "demo_clean", True)
+            self.assertFalse(
+                launcher.seed_provenance(path, "blocks_ranking_rgb", "demo_clean")[
+                    "verified"
+                ]
+            )
+            metadata = {
+                "verified": True,
+                "task": "blocks_ranking_rgb",
+                "task_config": "demo_clean",
+                "count": 2,
+                "seed_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+            path.with_suffix(".expert.json").write_text(json.dumps(metadata))
+            self.assertTrue(
+                launcher.seed_provenance(
+                    path, "blocks_ranking_rgb", "demo_clean", True
+                )["verified"]
+            )
+            with self.assertRaises(ValueError):
+                launcher.seed_provenance(path, "another_task", "demo_clean", True)
+            path.write_text("100000\n100003\n")
+            with self.assertRaises(ValueError):
+                launcher.seed_provenance(path, "blocks_ranking_rgb", "demo_clean", True)
 
     def test_partition_and_reject_incomplete_results(self):
         with tempfile.TemporaryDirectory() as temp:

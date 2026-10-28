@@ -65,7 +65,48 @@ cd ../..
 必须输出正确的环境路径、Torch 版本、`render: true` 和 `[240,320,4]`。
 无窗口渲染由 `headless.sh` 设置 NVIDIA EGL/Vulkan；缺驱动库应修复主机或容器配置。
 
-## 4. 单集验证与四卡评测
+## 4. 先用专家筛选场景种子
+
+独立入口不加载 VFA checkpoint，按 seed 递增运行专家。只有
+`plan_success` 和任务 `check_success()` 都通过才接受；
+每个候选最多3次，取最先通过的100个，不根据 Base/B2 的表现挑选。
+
+```bash
+GPU_ID=0 bash scripts/eval/check_expert.sh \
+  --task blocks_ranking_rgb --task-config demo_clean \
+  --count 100 --start-seed 100000 --max-candidates 2000 \
+  --output /absolute/path/to/expert_check_run
+# 中断后同一命令加 --resume；代码和场景配置必须保持一致。
+```
+
+脚本位于 `script/check_expert.py`，与评测共用 `script/expert_check.py` 的专家判定。
+普通规划/任务失败或不稳定场景会尝试下一候选；环境、CUDA 等非场景错误直接报错。
+每个候选完成后原子保存 `state.json`，其中含逐次检查结果；
+`seeds.partial.txt` 仅供查看进度。凑齐目标数量才生成 `seeds.txt`、
+`summary.json` 和 `EXPERT_SEEDS_COMPLETED`，未完成的列表不能用于正式对照。
+
+将完整结果发布为任务的默认列表：
+
+```bash
+test -f /absolute/path/to/expert_check_run/EXPERT_SEEDS_COMPLETED
+cp /absolute/path/to/expert_check_run/seeds.txt \
+  simulation/robotwin2.0/task_config/seedlists/blocks_ranking_rgb_demo_clean.txt
+cp /absolute/path/to/expert_check_run/summary.json \
+  simulation/robotwin2.0/task_config/seedlists/blocks_ranking_rgb_demo_clean.expert.json
+```
+
+Base 与 B2 都使用这同一份列表。默认评测会校验 `.expert.json` 中的任务、
+配置、数量和 seed 文件 SHA256，并把它记录到评测 manifest。
+评测每集仍会复核专家；固定 seed 检查失败则停止，不替换种子。
+其他任务先生成并发布对应的 `任务名_配置名.txt` 和 `.expert.json`。
+显式 `--seed-list` 可指定自有列表；无验证摘要时 manifest 标记为未预筛选。
+
+本仓库 `blocks_ranking_rgb/demo_clean` 默认表已于2026-10-28实际检查：
+100个候选全部通过，保存100个 seed（100000–100099），编号与原候选表相同，
+现在附带专家验证摘要。完整逐候选记录位于
+`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/expert_seeds/blocks_ranking_rgb_demo_clean_100_20261028_v1/state.json`。
+
+## 5. 单集验证与四卡评测
 
 统一使用仓库根目录的 `scripts/eval/eval_robotwin.sh`，默认 GPU0–3、
 100 个固定种子，每卡25集。执行链路：

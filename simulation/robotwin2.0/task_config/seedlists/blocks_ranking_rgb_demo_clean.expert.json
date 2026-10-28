@@ -1,0 +1,41 @@
+{
+  "verified": true,
+  "task": "blocks_ranking_rgb",
+  "task_config": "demo_clean",
+  "count": 100,
+  "candidate_count": 100,
+  "rejected_seeds": [],
+  "seed_sha256": "35c1162f576007e5713480601f1a2d24c87579fe8f9924f95105243e864aa9f6",
+  "selection": "first N consecutive candidates that pass expert planning AND task success",
+  "policy_checkpoint": null,
+  "settings": {
+    "task": "blocks_ranking_rgb",
+    "task_config": "demo_clean",
+    "count": 100,
+    "start_seed": 100000,
+    "max_candidates": 2000,
+    "attempts": 3
+  },
+  "runtime": {
+    "python": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/.venv/bin/python",
+    "environment": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/.venv",
+    "torch": "2.7.1+cu126",
+    "sapien": "3.0.0b1",
+    "gpu": "NVIDIA L4",
+    "curobo_commit": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
+    "envs": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/envs/__init__.py",
+    "curobo": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/envs/curobo/src/curobo/__init__.py"
+  },
+  "source_sha256": {
+    "script/check_expert.py": "e0943461732f9c1fb284c936ef0522a37136a6c09e368e4b085d3baf82453f45",
+    "script/expert_check.py": "9d95d91e26c4469a131e613d6d279e19d514f6da41a5239f520c15813335af28",
+    "script/eval_policy.py": "6dad42012d04245de1d040acc8572bee82917bbd7d9490fac679214ed38dc569",
+    "envs/_base_task.py": "93ed19dab6d6941e7431e0f9d7e71590b1b697d74b6cabb66be4efde363a0454",
+    "envs/robot/planner.py": "e8374a278b256f0a2b772b4d4485c0e1ecc8a8cde2685554e964f2a2f544ac1a",
+    "envs/blocks_ranking_rgb.py": "0e632df38d9024e7952c0df7a1f59e3d011b537724e6e6588455dee4d4e6074b",
+    "task_config/demo_clean.yml": "af4fc63ce5d050c3fb224acba2221613bb6c69540762c35ee77ce50af1aca263",
+    "task_config/_camera_config.yml": "dc80a40552e0fad25d58cf0141302ceba66d22409b5091bed235ad2f10cbce7f",
+    "task_config/_embodiment_config.yml": "b0a198ff27bf6bf6b73162d2d1adafc7e73fcdf53f39943e67e40fee15bd83fa"
+  },
+  "completed_at": "2026-10-28T11:39:23.344641+00:00"
+}

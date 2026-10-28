@@ -117,16 +117,14 @@ def runtime_record(policy_module):
 
 
 def check_expert(environment, seed, index, args):
-    for attempt in range(3):
-        try:
-            environment.setup_demo(now_ep_num=index, seed=seed, is_test=True, **args)
-            info = environment.play_once()
-            valid = environment.plan_success and environment.check_success()
-        finally:
-            environment.close_env(clear_cache=True)
-        if valid:
-            return info
-        print(f"EXPERT_RETRY seed={seed} attempt={attempt + 1}", flush=True)
+    from expert_check import check_scene
+    from envs.utils.create_actor import UnStableError
+
+    info, records = check_scene(
+        environment, seed, index, args, attempts=3, unstable_errors=(UnStableError,)
+    )
+    if records[-1]["success"]:
+        return info
     raise RuntimeError(
         f"Expert scene check failed for pinned seed {seed}; refusing to replace it"
     )
@@ -136,8 +134,11 @@ def run_episode(environment, model, policy, seed, index, args, video_size, outpu
     info = check_expert(environment, seed, index, args)
     environment.setup_demo(now_ep_num=index, seed=seed, is_test=True, **args)
     device = environment.scene.render_system.device
-    print(f"SIM_DEVICE cuda_id={device.cuda_id} pci={device.pci_string} "
-          f"visible={os.environ.get('CUDA_VISIBLE_DEVICES')}", flush=True)
+    print(
+        f"SIM_DEVICE cuda_id={device.cuda_id} pci={device.pci_string} "
+        f"visible={os.environ.get('CUDA_VISIBLE_DEVICES')}",
+        flush=True,
+    )
     np.random.seed(seed)
     descriptions = generate_episode_descriptions(args["task_name"], [info["info"]], 100)
     environment.set_instruction(np.random.choice(descriptions[0]["unseen"]))

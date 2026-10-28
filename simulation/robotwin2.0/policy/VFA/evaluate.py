@@ -33,6 +33,36 @@ def split_seeds(path, total, workers):
     return groups
 
 
+def seed_provenance(path, task, task_config, require_verified=False):
+    path = Path(path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    metadata_path = path.with_suffix(".expert.json")
+    if not metadata_path.exists():
+        if require_verified:
+            raise FileNotFoundError(
+                f"Missing expert verification: {metadata_path}; run scripts/eval/check_expert.sh first"
+            )
+        return {"verified": False, "seed_sha256": digest, "seed_list": str(path)}
+    metadata = json.loads(metadata_path.read_text())
+    values = [int(line) for line in path.read_text().splitlines() if line.strip()]
+    if (
+        metadata.get("verified") is not True
+        or metadata.get("task") != task
+        or metadata.get("task_config") != task_config
+        or metadata.get("seed_sha256") != digest
+        or metadata.get("count") != len(values)
+        or len(set(values)) != len(values)
+    ):
+        raise ValueError("Expert seed metadata does not match task/profile/content")
+    return {
+        "verified": True,
+        "seed_sha256": digest,
+        "seed_list": str(path),
+        "metadata": str(metadata_path),
+        "count": len(values),
+    }
+
+
 def merge_results(output, groups, gpus):
     records = []
     for gpu, expected in zip(gpus, groups):
@@ -73,7 +103,7 @@ def main():
     parser.add_argument(
         "--seed-list",
         type=Path,
-        default=ROOT / "task_config/seedlists/blocks_ranking_rgb_demo_clean.txt",
+        help="Override the task/profile's expert-verified default seed list",
     )
     parser.add_argument("--task", default="blocks_ranking_rgb")
     parser.add_argument("--task-config", default="demo_clean")
@@ -86,6 +116,18 @@ def main():
         or any(g < 0 for g in args.gpus)
     ):
         raise ValueError("Invalid nfe or GPU IDs")
+    explicit_seed_list = args.seed_list is not None
+    if args.seed_list is None:
+        args.seed_list = (
+            ROOT / "task_config/seedlists" / f"{args.task}_{args.task_config}.txt"
+        )
+    args.seed_list = args.seed_list.resolve()
+    seed_info = seed_provenance(
+        args.seed_list,
+        args.task,
+        args.task_config,
+        require_verified=not explicit_seed_list,
+    )
     args.checkpoint = args.checkpoint.resolve()
     if args.output is None:
         args.output = (
@@ -103,6 +145,7 @@ def main():
         "episodes": args.episodes,
         "gpus": args.gpus,
         "seed_groups": groups,
+        "expert_seed_provenance": seed_info,
         "nfe": args.nfe,
         "tau": [i / args.nfe for i in range(args.nfe + 1)],
         "runtime": "single_process_direct_inference",

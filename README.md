@@ -156,7 +156,9 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
   输出逐关节 GT / 预测 chunk 曲线、原始预测和误差。
 - [RoboTwin 闭环评测](simulation/robotwin2.0/README.md)：统一入口为
   `scripts/eval/eval_robotwin.sh`，默认 GPU0–3 四卡、100个固定种子、每卡25集，
-  完整检查后合并结果。同进程直接推理，默认四步均匀 Euler，`--nfe 10` 可改为十步。
+  完整检查后合并结果。先用 `scripts/eval/check_expert.sh` 筛出100个专家成功的
+  scene seed，发布为任务默认列表和验证摘要，Base/B2 共用；步骤见平台 README。
+  同进程直接推理，默认四步均匀 Euler，`--nfe 10` 可改为十步。
 - 保存后严格重载并验证有限动作：`PYTHONPATH=src .venv/bin/python tools/check_policy_checkpoint.py /path/to/checkpoint`。
 
 CPU 测试：

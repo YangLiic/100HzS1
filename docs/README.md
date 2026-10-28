@@ -41,7 +41,11 @@ VFA ONNX 导出入口为 `python -m vfa.trainer.onnx`，对应配置位于 `conf
 通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_vfa.py` 提供 VFA 的历史缓冲示例。
 
 RoboTwin2 评测统一使用 VFA 直接推理入口，默认四卡 GPU0–3、100个固定种子，
-每卡25集，完成后严格合并结果：
+每卡25集，完成后严格合并结果。先使用 `scripts/eval/check_expert.sh` 筛选专家能成功的
+100个场景并发布默认 seed 表和验证摘要；两组模型必须共用这份列表。
+筛选命令和断点续跑见 [平台说明](../simulation/robotwin2.0/README.md#4-先用专家筛选场景种子)。
+
+评测示例：
 
 ```bash
 bash scripts/eval/eval_robotwin.sh \
