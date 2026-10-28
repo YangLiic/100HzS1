@@ -10,7 +10,8 @@ model:
         do_normalize: true
         image_mean: [0.485, 0.456, 0.406]
         image_std: [0.229, 0.224, 0.225]
-      dim_2d: 1024
+      efficientvit_fusion_mode: native
+      dim_2d: null  # infer native trunk width; adapter still outputs 1024
       load_backbone_pretrain: true
       only_2d: true
       backbone_target: efficientvit

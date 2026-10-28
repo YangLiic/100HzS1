@@ -1,5 +1,5 @@
 # @package _global_
-# Opt in to native-width fusion; the original observation config stays projected.
+# Explicit native alias; the shared EfficientViT profile also defaults to native.
 defaults:
   - efficientvit_b3_3v
   - _self_

@@ -147,7 +147,7 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
   先经可训练 Linear 投影到 1024，再融合、压缩。新 `native` 配置自动读取主干通道，
   以 384/512 维融合、压缩，移除前置投影，仅在压缩末尾输出 1024 维。
   两种模式都输出 `[batch,12,1024]`；DINOv3 路径保持不变。
-- 原训练配置和无模式字段的历史 checkpoint 继续使用 `projected`，可照常续训、评测。
+- EfficientViT 代码和共享配置默认 `native`；无模式字段的历史 checkpoint 在加载时补为 `projected`，保留旧结构。继续旧实验须显式设置 projected、dim_2d=1024。
   新实验选择 `blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml`（B3 同理），
   已配置独立输出目录；窄维融合/压缩权重不兼容旧投影模式，不能原样恢复旧优化器状态。
 

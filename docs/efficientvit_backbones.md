@@ -98,8 +98,8 @@ RMSE：Base 0.01566 rad、B2 0.01532 rad。流程见
 `EmVisRM` 新增 `efficientvit_fusion_mode`，只影响 EfficientViT：
 
 - `projected`：保持原结构，先 Linear(384/512, dim_2d)，再融合、压缩。
-  缺少该字段时默认此模式，历史 checkpoint、原训练 YAML 的参数键、尺寸和顺序不变。
-- `native`：从 `backbone.out_channels` 自动取得 B2=384、B3=512，忽略旧的 `dim_2d`；
+  仅历史 checkpoint 缺少字段时由加载器补为此模式，保留旧参数尺寸和顺序。
+- `native`（代码与共享配置默认）：从 `backbone.out_channels` 自动取得 B2=384、B3=512，忽略旧的 `dim_2d`；
   前置投影为 Identity，MultiViewFuser 和 ResNetAdapter 输入都使用原生宽度。
   `model_adapter_config.dim_out` 仍设为 1024，末尾已有的 Linear 完成升维，
   因而输出仍为 `[B,12,1024]`，后续 scene_adaptor / DiT 接口不变。
@@ -124,9 +124,8 @@ configs/vfa_train/blocks_ranking_rgb_efficientvit_b3_native_3v_8gpu_L4.yaml
 ```
 
 这两份配置继承原训练配方，但输出目录名含 `_native_`，不会与既有投影实验共用目录。
-原有 B2/B3 实验保留 projected 结构，正在运行的训练无需重启；修改源文件不会替换进程内已经构建的模型。
-旧 checkpoint 缺少模式字段，重新加载时仍构建旧结构。继续旧实验应使用原训练 YAML、原输出目录和
-`resume_from_checkpoint=latest`；不要用 native YAML 恢复旧 checkpoint。
+旧 checkpoint 缺少模式字段，加载时仍构建 projected 结构；新训练默认 native。
+继续旧实验必须显式设置 projected 和 dim_2d=1024，并沿用原输出目录。
 
 native 是新的网络结构，不能通过删除一个权重键、设置 `strict=False` 或恢复旧优化器状态实现等价转换。
 切换时应另开实验，继续加载同一 EfficientViT 预训练主干，重新训练融合/压缩层。

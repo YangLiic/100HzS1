@@ -24,6 +24,9 @@ class VisualEncoder(ModuleAttrMixin):
         super().__init__()
         self.rgb_key = rgb_key
         self.scene_encoder = EmVisRM(**emvis_config)
+        # Persist the architecture choice even when the caller used defaults.
+        if self.scene_encoder.backbone_target == "efficientvit":
+            emvis_config["efficientvit_fusion_mode"] = self.scene_encoder.efficientvit_fusion_mode
         # update emvis_config after initialization
         if 'load_backbone_pretrain' in emvis_config:
             emvis_config['load_backbone_pretrain'] = False
@@ -61,7 +64,7 @@ class EmVisRM(nn.Module):
 
     DINOv3 ConvNeXt keeps its original state keys and pixel processing.
     EfficientViT native mode fuses/compresses at the trunk width. Projected mode
-    remains the default for configs/checkpoints created before native support.
+    is restored explicitly when loading checkpoints created before native support.
     """
 
     def __init__(
@@ -86,7 +89,7 @@ class EmVisRM(nn.Module):
         model_adapter_config: Dict = None,
         mv_fuser_config: Dict = None,
         backbone_trainable: bool = False,
-        efficientvit_fusion_mode: str = "projected",
+        efficientvit_fusion_mode: str = "native",
         **kwargs
     ):
         super().__init__()

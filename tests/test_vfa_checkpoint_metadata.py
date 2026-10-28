@@ -57,6 +57,17 @@ class CheckpointNamespaceTests(unittest.TestCase):
         config = {"pkg_map": {"AutoModel": "vfa.models.VFADitFlowMatching"}}
         self.assertEqual(normalize_checkpoint_metadata(config), config)
 
+    def test_legacy_visual_mode_is_loading_only_and_explicit_native_is_preserved(self):
+        legacy = {"obs_encoder": {"emvis_config": {"backbone_target": "efficientvit"}}}
+        saved = deepcopy(legacy)
+        mapped = normalize_checkpoint_metadata(legacy)
+        self.assertEqual(legacy, saved)
+        self.assertEqual(mapped["obs_encoder"]["emvis_config"]["efficientvit_fusion_mode"], "projected")
+        self.assertEqual(normalize_checkpoint_metadata(mapped), mapped)
+        native = deepcopy(legacy)
+        native["obs_encoder"]["emvis_config"]["efficientvit_fusion_mode"] = "native"
+        self.assertEqual(normalize_checkpoint_metadata(native), native)
+
     def test_other_packages_are_not_redirected(self):
         path = "another_package.models.RTPolicyDitFlowMatching"
         self.assertEqual(canonical_class_path(path), path)

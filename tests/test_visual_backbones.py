@@ -16,7 +16,7 @@ from vfa.models.policy.vfa.emvis.encoder.efficientvit_encoder import EfficientVi
 
 def scene_config(variant="b2", dim=1024):
     return dict(
-        backbone_target="efficientvit",
+        backbone_target="efficientvit", efficientvit_fusion_mode="projected",
         backbone_config={"model_name": f"efficientvit_{variant}.r256_in1k"},
         backbone_trainable=False, load_backbone_pretrain=False,
         backbone_path="/nonexistent/pretrained",
@@ -193,7 +193,13 @@ class VisualBackboneTests(unittest.TestCase):
         for mode in (None, "projected"):
             with self.subTest(mode=mode):
                 reload_config = deepcopy(config)
-                if mode is not None:
+                if mode is None:
+                    from vfa.common.checkpoint import normalize_checkpoint_metadata
+                    reload_config.pop("efficientvit_fusion_mode")
+                    reload_config = normalize_checkpoint_metadata({
+                        "obs_encoder": {"emvis_config": reload_config}
+                    })["obs_encoder"]["emvis_config"]
+                else:
                     reload_config["efficientvit_fusion_mode"] = mode
                 updated = EmVisRM(**reload_config).train()
                 self.assertEqual(list(original.state_dict()), list(updated.state_dict()))
@@ -215,7 +221,7 @@ class VisualBackboneTests(unittest.TestCase):
                 for key, value in original.state_dict().items():
                     torch.testing.assert_close(updated.state_dict()[key], value, rtol=0, atol=0)
 
-    def test_native_configs_compose_without_changing_legacy_experiments(self):
+    def test_native_configs_and_shared_defaults_compose(self):
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
         root = Path(__file__).resolve().parents[1]
@@ -229,8 +235,8 @@ class VisualBackboneTests(unittest.TestCase):
                     OmegaConf.resolve(cfg)
                 old_vision = legacy.model.obs_encoder.emvis_config
                 new_vision = native.model.obs_encoder.emvis_config
-                self.assertEqual(old_vision.get("efficientvit_fusion_mode", "projected"), "projected")
-                self.assertEqual(old_vision.dim_2d, 1024)
+                self.assertEqual(old_vision.efficientvit_fusion_mode, "native")
+                self.assertIsNone(old_vision.dim_2d)
                 self.assertEqual(new_vision.efficientvit_fusion_mode, "native")
                 self.assertIsNone(new_vision.dim_2d)
                 self.assertEqual(new_vision.model_adapter_config.dim_out, 1024)
@@ -248,6 +254,13 @@ class VisualBackboneTests(unittest.TestCase):
                     vision.pop("dim_2d")
                     vision.pop("efficientvit_fusion_mode", None)
                 self.assertEqual(actual, expected)
+
+    def test_missing_mode_new_encoder_defaults_native_and_serializes_it(self):
+        config = scene_config()
+        config.pop("efficientvit_fusion_mode")
+        model = VisualEncoder(emvis_config=config, rgb_key=["left_cam", "right_cam", "head_cam"])
+        self.assertEqual(model.scene_encoder.dim_2d, 384)
+        self.assertEqual(config["efficientvit_fusion_mode"], "native")
 
     def test_native_rejects_conflicting_widths_and_unknown_modes(self):
         config = scene_config()

@@ -1,7 +1,7 @@
 """Resolve historical checkpoint metadata through the installed VFA package.
 
-The mapping applies to class-reference fields only. Dataset IDs, paths, tensor
-names, and checkpoint files themselves are left untouched.
+Historical EfficientViT checkpoints missing a fusion mode retain their projected
+architecture. Dataset IDs, paths, tensors and checkpoint files are untouched.
 """
 
 from copy import deepcopy
@@ -49,7 +49,7 @@ def _normalize_reference(value):
 
 
 def normalize_checkpoint_metadata(config):
-    """Copy a config and normalize only its dynamic class-reference metadata."""
+    """Copy loading metadata, preserving historical classes and visual shapes."""
     normalized = deepcopy(config)
     for field in ("pkg_map", "auto_map"):
         references = normalized.get(field)
@@ -63,6 +63,10 @@ def normalize_checkpoint_metadata(config):
             _LEGACY_CLASS_NAMES.get(name, name)
             for name in normalized["architectures"]
         ]
+    vision = normalized.get("obs_encoder", {}).get("emvis_config", {})
+    if isinstance(vision, dict) and vision.get("backbone_target", "").lower() == "efficientvit":
+        # Before native support, every missing-mode checkpoint was projected.
+        vision.setdefault("efficientvit_fusion_mode", "projected")
     return normalized
 
 
