@@ -51,6 +51,14 @@ lance-video = [
     "av>=17.1,<18",
 ]
 
-[tool.setuptools]  # configuration specific to the `setuptools` build backend.
-packages = { find = { where = ["."], include = ["rtpolicy", "rtpolicy.*"] } }
-package-data = { "rtpolicy" = ["**/*.yaml", ] }
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rtpolicy", "rtpolicy.*", "vfa", "vfa.*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+rtpolicy = ["**/*.yaml"]
+vfa = ["**/*.yaml"]

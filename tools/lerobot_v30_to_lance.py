@@ -28,7 +28,7 @@ import pyarrow.parquet as pq
 from PIL import Image
 
 # Also supports invocation from outside the repo without an editable install.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from rtpolicy.datasets.lance_video import VideoDecoderCache
 
 

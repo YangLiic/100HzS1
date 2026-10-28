@@ -348,7 +348,7 @@ def _get_runtime_emvis_override(args) -> Dict[str, Any]:
 
 
 def _repo_root() -> str:
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
 
 def _load_checkpoint_config_dict(checkpoint_dir: str) -> Dict[str, Any]:

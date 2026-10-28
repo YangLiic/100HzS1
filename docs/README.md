@@ -1,6 +1,8 @@
 # VFA 运行说明
 
 使用 `python -m pip install -e .` 安装；Python 源码包名暂时保留为 `rtpolicy`。
+源码位于 `src/rtpolicy/`，后续 VFA 实现放在 `src/vfa/`；安装后仍使用 `import rtpolicy` 或 `import vfa`，无需在导入路径中添加 `src`。
+移动目录或切换布局后，请在使用的 Python 环境中重新执行开发模式安装。
 本分支仅包含运行代码和配置；数据集、预训练权重、checkpoint、RobotWin2 资产需单独准备。
 
 训练性能优化的定位思路、实测结果和640配置见[性能优化笔记](performance_optimization.md)。
