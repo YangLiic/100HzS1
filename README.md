@@ -23,7 +23,6 @@ python -c "import torch, av, pyarrow, timm; print(torch.__version__, av.__versio
 `PYTHON_BIN` 可指定 Python 3.10，`VFA_TRAIN_ENV` 可指定环境目录；
 `UV_CACHE_DIR` 可把下载缓存移到容量充足的磁盘。
 只有维护依赖时才修改 `requirements_train.txt` 并运行 `setup_train_env.sh --refresh-lock`，再提交锁文件。
-`requirements_cluster.txt` 是旧容器的完整依赖快照，新机器使用上述训练安装入口。
 
 RoboTwin 仿真另有专用环境，见 [仿真搭建说明](simulation/robotwin2.0/README.md)；
 RoboTwin 与 VFA 推理在该环境的同一进程直接调用，训练环境与仿真环境分别安装。
