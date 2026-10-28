@@ -12,6 +12,8 @@ B2 的完整视觉编码在 batch=16 时从 Base 的170.866ms降到81.709ms，�
 
 ## 维度与分辨率
 
+本节保留首轮 `projected` 视觉时延；最新 native 与完整策略的 GPU 实测、结论见文末“L4完整策略复测”。
+
 | 项目 | DINOv3 ConvNeXt-Base | EfficientViT-B2 | EfficientViT-B3 |
 |---|---|---|---|
 | 读取图像，CHW | 3×240×320 | 相同 | 相同 |
@@ -89,3 +91,105 @@ RMSE：Base 0.01566 rad、B2 0.01532 rad。流程见
 [开环评测](../scripts/openloop_eval/README.md)。目前暂停100集闭环评测；
 没有可用于宣称任务成功率提升的完整结果。自有仿真环境搭建见
 [RoboTwin README](../simulation/robotwin2.0/README.md)。
+
+
+## 原生宽度融合与旧训练兼容
+
+`EmVisRM` 新增 `efficientvit_fusion_mode`，只影响 EfficientViT：
+
+- `projected`：保持原结构，先 Linear(384/512, dim_2d)，再融合、压缩。
+  缺少该字段时默认此模式，历史 checkpoint、原训练 YAML 的参数键、尺寸和顺序不变。
+- `native`：从 `backbone.out_channels` 自动取得 B2=384、B3=512，忽略旧的 `dim_2d`；
+  前置投影为 Identity，MultiViewFuser 和 ResNetAdapter 输入都使用原生宽度。
+  `model_adapter_config.dim_out` 仍设为 1024，末尾已有的 Linear 完成升维，
+  因而输出仍为 `[B,12,1024]`，后续 scene_adaptor / DiT 接口不变。
+
+保持融合 depth=1、16 heads、MLP ratio=2、conv_num=2：
+
+| 主干 | projected 融合/压缩宽度 | native 融合/压缩宽度 | projected 投影+融合+压缩参数 | native 对应参数 |
+|---|---:|---:|---:|---:|
+| B2 | 1024 | 384 | 58,106,880 | 8,371,840 |
+| B3 | 1024 | 512 | 58,237,952 | 14,701,056 |
+
+表中不含冻结主干和 DiT。宽度可被16整除；此变更未调整注意力头数、空间压缩比例或策略配置。
+计算量下降不代表端到端时延按相同比例下降，任务成功率也需要重新评测。
+
+新观察配置为 `observation_config/efficientvit_b2_native_3v.yaml`、B3 对应文件；
+它们继承旧配置，只设置 `efficientvit_fusion_mode: native`、`dim_2d: null`。
+独立训练配置为：
+
+```text
+configs/vfa_train/blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml
+configs/vfa_train/blocks_ranking_rgb_efficientvit_b3_native_3v_8gpu_L4.yaml
+```
+
+这两份配置继承原训练配方，但输出目录名含 `_native_`，不会与既有投影实验共用目录。
+原有 B2/B3 实验保留 projected 结构，正在运行的训练无需重启；修改源文件不会替换进程内已经构建的模型。
+旧 checkpoint 缺少模式字段，重新加载时仍构建旧结构。继续旧实验应使用原训练 YAML、原输出目录和
+`resume_from_checkpoint=latest`；不要用 native YAML 恢复旧 checkpoint。
+
+native 是新的网络结构，不能通过删除一个权重键、设置 `strict=False` 或恢复旧优化器状态实现等价转换。
+切换时应另开实验，继续加载同一 EfficientViT 预训练主干，重新训练融合/压缩层。
+后续策略层虽可单独迁移，但这属于显式的部分初始化，不是无缝续训，本次未自动迁移。
+
+验证覆盖 B2/B3 原生宽度前向、反向、冻结 BN、配置 JSON 重建和严格权重重载；
+另对照变更前代码验证旧模式的参数键、优化器恢复后一次更新逐值一致，
+并保留 DINOv3 原有 checkpoint 键和前向逐值一致的回归检查。
+
+
+本次 native 改动的 CPU 验证结果：16 项视觉/历史元数据测试全部通过；
+实际运行目录 `efficientvit_b2_3v_obs1_h24_8gpu_L4_20261028` 下的 `checkpoint-10000`
+用新版代码通过完整策略的 strict reload，并得到有限动作输出 `[1,23,14]`。
+该阶段仅做 CPU 验证、只读取 checkpoint；后续 GPU 时延实测见下节，未测量任务成功率。
+
+
+## 2026-10-28 L4完整策略复测：最终结论
+
+当前 PyTorch eager BF16 实现，单机器人 batch=1 下，B2 投影版和 native 版都没有超过 DINOv3-Base；batch16 的完整推理吞吐与训练计算步有实际优势。K/V缓存已默认开启，它是独立于编码器替换的软件优化。
+
+每个batch样本是一组同步观测（三视角RGB和状态），不是一张图。以下数据使用真实验证episode4、当前观测1帧、horizon24/未来23动作、10步去噪。完整推理每组150次、三轮正反顺序；训练计算每组60步。
+
+| 模型 | batch1无缓存/ms | batch1开缓存/ms | batch1开缓存p95/ms | batch16开缓存/ms | batch16训练计算/ms |
+|---|---:|---:|---:|---:|---:|
+| DINOv3-Base | 77.51 | 70.78 | 74.42 | 266.73 | 338.93 |
+| B2 projected | 79.08 | 72.38 | 74.21 | 173.73 | 240.63 |
+| B2 native* | 79.25 | 72.57 | 74.47 | 167.56 | 202.30 |
+
+*native融合/压缩层尚未训练，仅测结构时延；其余主干、策略头和归一化沿用B2权重，不能作为成功率证据。
+
+两边都开缓存时，B2 projected 的 batch16 完整推理吞吐为 Base 的 1.54 倍，训练计算为 1.41 倍；训练测量不含数据读取、H2D、EMA和保存。两类主干都按原训练配置显式冻结。
+
+另做450次相邻请求交错验证，全部6种模型顺序均衡轮换，B2相对Base的成对速度比约0.959；两种B2结构的块bootstrap95%区间均低于1，进一步验证单观测没有提速。该区间仅描述本次运行，不外推到其他硬件或后端。
+
+旧方法复测（仅视觉模块）也支持原结论：batch1 Base12.19ms/B2 projected13.98ms，batch16 Base166.77ms/B2 projected80.32ms。旧表分别为12.63/12.78ms与170.87/81.71ms。旧表只测视觉，不应把其2倍吞吐直接当作整套策略或完整训练的加速比例。
+
+缓存前后六组动作检查最大差异为0，每层K/V投影从10次降到1次，总计80→8次。所有正式计时均无其他GPU计算进程，GPU频率/功率未手工修改。
+
+截图中的官方分类模型表使用Jetson/A100和TensorRT FP16；这里是L4的三视角PyTorch策略，两种口径不能直接比较。单机器人更应看batch1响应延迟和p95，多batch推理也可用于多机器人或并行仿真，并不只代表训练速度。
+
+完整方法、分轮数据、CPU输入/H2D、交错验证和官方来源见 [完整报告](VFA/l4_latency_review_20261028.md)。
+
+测试脚本：`tools/benchmark_vfa_policy.py`。原始结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_l4_latency_review_v1/{legacy_retest,full_v2,paired_b1}`。
+
+
+## 补充：真正单张图 batch=1 的编码器测量
+
+此前“观测batch=1”包含3张图。本节输入严格为 `[1,3,H,W]`，只比较裸空间特征主干，不含预处理/H2D、分类头、外部Linear、融合、压缩和DiT。DINO取stages输出，B2取forward_features输出，均保留各自主干内部操作。
+
+| 精度 | H×W | DINOv3-Base p50/ms | B2 p50/ms |
+|---|---|---:|---:|
+| BF16 autocast | 256×320 | 6.663 | 10.098 |
+| BF16 autocast | 256×256 | 6.869 | 10.150 |
+| FP16 autocast | 256×320 | 6.494 | 9.504 |
+| FP16 autocast | 256×256 | 6.534 | 9.590 |
+
+结果：本次L4/PyTorch eager环境中，B2在上述四组单张图条件下都没有更快，耗时约高46%–52%。保留VFA实际编码器的最终归一化和token/位置包装时也得到相同结论。
+
+每组450样本（3轮×150），每段30次预热。FP32权重，TF32关闭，不编译；FP16 autocast也不等同于TensorRT FP16。尚不能外推到其他部署后端。
+
+脚本：`tools/benchmark_single_image_backbones.py`。原始数据：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_single_image_bs1_v1`。
+
+
+## 单图时延的运行时归因
+
+单图eager时延并不直接反映GPU算力成本。最新诊断中，Base/B2 eager为6.70/12.63ms；保持同样计算、改用静态CUDA Graph回放后为4.54/2.25ms，输出最大差异均为0。B2在减少逐算子提交和运行时开销后反超Base。此结果不是已上线的完整策略加速，也不是TensorRT实测。详见 [原因分析](VFA/bs1_cause_analysis_20261028.md) 和 [报告目录](VFA/README.md)。

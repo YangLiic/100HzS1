@@ -1,0 +1,11 @@
+# @package _global_
+# Opt in to native-width fusion; the original observation config stays projected.
+defaults:
+  - efficientvit_b2_3v
+  - _self_
+
+model:
+  obs_encoder:
+    emvis_config:
+      efficientvit_fusion_mode: native
+      dim_2d: null  # inferred from backbone.out_channels, not a policy width

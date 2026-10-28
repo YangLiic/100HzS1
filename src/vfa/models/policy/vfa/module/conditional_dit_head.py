@@ -103,7 +103,14 @@ class DiT(nn.Module):
         # Move all the params to given data type:
         self.to(self.dtype)
 
-    def forward(self, x, t, scene_c, scene_mask=None):
+    def prepare_kv_cache(self, scene_c):
+        """Return per-layer K/V for one prediction; never store it on the model."""
+        if self.training or torch.is_grad_enabled():
+            raise RuntimeError("K/V caching requires eval mode with gradients disabled")
+        scene_c = scene_c + self.scene_cond_pos_embed
+        return tuple(block.cross_attn.prepare_kv(scene_c) for block in self.blocks)
+
+    def forward(self, x, t, scene_c, scene_mask=None, kv_cache=None):
         """
         Forward pass of RDT.
         
@@ -126,13 +133,20 @@ class DiT(nn.Module):
         
         # Add multimodal position embeddings
         x = x + self.x_pos_embed
-        # Note the lang is of variable length
-        scene_c = scene_c + self.scene_cond_pos_embed
+        if kv_cache is None:
+            scene_c = scene_c + self.scene_cond_pos_embed
+        else:
+            if self.training or torch.is_grad_enabled():
+                raise RuntimeError("K/V caching requires eval mode with gradients disabled")
+            if len(kv_cache) != len(self.blocks):
+                raise ValueError("K/V cache must contain one entry per DiT block")
 
         # Forward pass
         for i, block in enumerate(self.blocks):
-            c, mask = scene_c, scene_mask
-            x = block(x, c, mask)                       # (B, T+1, D)
+            if kv_cache is None:
+                x = block(x, scene_c, scene_mask)       # (B, T+1, D)
+            else:
+                x = block(x, scene_c, scene_mask, kv_cache=kv_cache[i])
         # Inject the language condition at the final layer
         if self.use_final_layer:
             x = self.final_layer(x)                         # (B, T+1, out_channels)

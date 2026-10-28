@@ -59,7 +59,8 @@ class EmVisRM(nn.Module):
     """Spatial backbone -> channel alignment -> MultiViewFuser -> ResNetAdapter.
 
     DINOv3 ConvNeXt keeps its original state keys and pixel processing.
-    MIT EfficientViT projects native spatial channels to the same policy width.
+    EfficientViT native mode fuses/compresses at the trunk width. Projected mode
+    remains the default for configs/checkpoints created before native support.
     """
 
     def __init__(
@@ -84,6 +85,7 @@ class EmVisRM(nn.Module):
         model_adapter_config: Dict = None,
         mv_fuser_config: Dict = None,
         backbone_trainable: bool = False,
+        efficientvit_fusion_mode: str = "projected",
         **kwargs
     ):
         super().__init__()
@@ -119,11 +121,21 @@ class EmVisRM(nn.Module):
             from .encoder.efficientvit_encoder import EfficientViTEncoder
             from transformers import DINOv3ViTImageProcessorFast
 
+            if efficientvit_fusion_mode not in ("projected", "native"):
+                raise ValueError(
+                    "efficientvit_fusion_mode must be 'projected' or 'native', "
+                    f"got {efficientvit_fusion_mode!r}"
+                )
+            self.efficientvit_fusion_mode = efficientvit_fusion_mode
             self.backbone = EfficientViTEncoder(
                 **backbone_config, frozen=not self.backbone_trainable,
             )
-            # This bridge remains trainable even when the trunk is frozen.
-            self.backbone_projection = nn.Linear(self.backbone.out_channels, self.dim_2d)
+            if self.efficientvit_fusion_mode == "native":
+                self.dim_2d = self.backbone.out_channels
+                self.backbone_projection = nn.Identity()
+            else:
+                # Preserve old tensor shapes, state keys and optimizer ordering.
+                self.backbone_projection = nn.Linear(self.backbone.out_channels, self.dim_2d)
             # Use the same geometric preprocessing and ImageNet normalization
             # as DINOv3, with no square crop to the classifier's nominal size.
             processor_config.pop('load_pretrain', None)
@@ -148,6 +160,14 @@ class EmVisRM(nn.Module):
         assert only_2d, "only_2d=True (2D token flow) is the only supported mode"
         self.only_2d = only_2d
         dim_now = self.dim_2d
+
+        if self.backbone_target == "efficientvit" and self.efficientvit_fusion_mode == "native":
+            for name, config in (("mv_fuser_config", mv_fuser_config),
+                                 ("model_adapter_config", model_adapter_config)):
+                if config and config.get("dim_in", dim_now) != dim_now:
+                    raise ValueError(
+                        f"{name}.dim_in must match native EfficientViT width {dim_now}"
+                    )
 
         # initialize multiview fuser
         if mv_fuser_config:
@@ -184,6 +204,11 @@ class EmVisRM(nn.Module):
             dim_now = model_adapter_config['dim_out']
             self.shape_out = model_adapter_config['shape_out']
         self.dim_out = dim_now
+        if self.backbone_target == "efficientvit":
+            logger.info(
+                "EfficientViT fusion mode=%s, native width=%d, fusion width=%d, output width=%d",
+                self.efficientvit_fusion_mode, self.backbone.out_channels, self.dim_2d, self.dim_out,
+            )
 
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)

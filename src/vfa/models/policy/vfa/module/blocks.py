@@ -128,14 +128,28 @@ class CrossAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
     
-    def forward(self, x: torch.Tensor, c: torch.Tensor, 
-                mask: torch.Tensor | None = None) -> torch.Tensor:
-        B, N, C = x.shape
-        _, L, _ = c.shape
-        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+    def prepare_kv(self, c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Project a fixed condition and normalize its keys once."""
+        B, L, _ = c.shape
         kv = self.kv(c).reshape(B, L, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         k, v = kv.unbind(0)
-        q, k = self.q_norm(q), self.k_norm(k)
+        return self.k_norm(k), v
+
+    def forward(self, x: torch.Tensor, c: torch.Tensor,
+                mask: torch.Tensor | None = None,
+                kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
+        B, N, C = x.shape
+        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        if kv_cache is None:
+            # Preserve the original training/uncached execution order.
+            _, L, _ = c.shape
+            kv = self.kv(c).reshape(B, L, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+            k, v = kv.unbind(0)
+            q, k = self.q_norm(q), self.k_norm(k)
+        else:
+            k, v = kv_cache
+            L = k.shape[-2]
+            q = self.q_norm(q)
 
         # Prepare attn mask (B, L) to mask the conditioion
         if mask is not None:
@@ -249,12 +263,12 @@ class Block(nn.Module):
             act_layer=approx_gelu, drop=0)
         self.norm3 = RmsNorm(hidden_size, eps=1e-6)
 
-    def forward(self, x, c, mask=None):
+    def forward(self, x, c, mask=None, kv_cache=None):
         if self.self_attn_first:
             attn1 = self.attn
-            attn2 = functools.partial(self.cross_attn, c=c, mask=mask)
+            attn2 = functools.partial(self.cross_attn, c=c, mask=mask, kv_cache=kv_cache)
         else:
-            attn1 = functools.partial(self.cross_attn, c=c, mask=mask)
+            attn1 = functools.partial(self.cross_attn, c=c, mask=mask, kv_cache=kv_cache)
             attn2 = self.attn
         origin_x = x
         x = self.norm1(x)

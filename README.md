@@ -142,13 +142,23 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
   设为 true、`cache_decoded_video=false` 时仅缓存非视频数据，视频按需解码；
   两者为 true 时还会预解码视频为 uint8 帧，放入训练节点的 CPU 共享内存。
   不占 GPU 显存，也不占其他开发机内存；Hugging Face 的磁盘 Arrow 缓存是另一层缓存。
-- 两类主干默认冻结；训练融合器、适配器、策略，以及 EfficientViT 的通道对齐层。
-  输入三视角 240×320，沿用 VFA 预处理对齐为 256×320。
-  B2 的 384 通道（B3 为 512）投影到 1024，再经原融合与适配模块输出
-  `[batch,12,1024]`，与 Base 策略接口相同。
+- 两类主干默认冻结；输入三视角 240×320，沿用 VFA 预处理对齐为 256×320。
+  EfficientViT 的旧配置使用 `projected` 模式：B2 的 384 通道（B3 为 512）
+  先经可训练 Linear 投影到 1024，再融合、压缩。新 `native` 配置自动读取主干通道，
+  以 384/512 维融合、压缩，移除前置投影，仅在压缩末尾输出 1024 维。
+  两种模式都输出 `[batch,12,1024]`；DINOv3 路径保持不变。
+- 原训练配置和无模式字段的历史 checkpoint 继续使用 `projected`，可照常续训、评测。
+  新实验选择 `blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml`（B3 同理），
+  已配置独立输出目录；窄维融合/压缩权重不兼容旧投影模式，不能原样恢复旧优化器状态。
 
 适配维度和 L4 时延结果见 [编码器说明](docs/efficientvit_backbones.md)。
 批量训练视觉编码更快不等于单次策略推理或闭环成功率更好。
+
+PyTorch 推理在 `model.eval()` 后调用 `predict_action(obs)` 时默认启用逐层 K/V 缓存：
+同一次动作预测中先计算包含视觉位置编码的 K/V 和 K 归一化，去噪循环内复用，
+下一次预测重新生成；缓存不保存到模型或 checkpoint。参数量、权重键、训练计算不变，
+历史 checkpoint 无需转换。`predict_action(obs, use_kv_cache=False)` 可关闭缓存作对照。
+训练模式或启用梯度时自动使用原计算路径；已有 ONNX 导出包装器继续走未缓存路径。
 
 ## 5. 检查与评测
 

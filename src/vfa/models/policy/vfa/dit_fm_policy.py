@@ -285,7 +285,8 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
     
     # ========= inference  ============
     def conditional_sample(
-            self, scene_cond, state_traj, action_mask, return_flow:bool = False, **kwargs
+            self, scene_cond, state_traj, action_mask, return_flow:bool = False,
+            use_kv_cache: bool = True, **kwargs
         ) -> torch.Tensor:
         '''
         scene_cond: image conditional data, (batch_size, patch_num, hidden_size).
@@ -309,6 +310,12 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         num_steps = self.num_inference_timesteps
         dt = 1.0 / num_steps
 
+        # The condition is fixed only within this sampling call. Training and
+        # grad-enabled callers keep the original path; no cache survives a call.
+        kv_cache = None
+        if use_kv_cache and not self.training and not torch.is_grad_enabled():
+            kv_cache = self.model.prepare_kv_cache(scene_cond)
+
         state_mask = ~action_mask
         for t in range(num_steps):
             # timesteps = t.unsqueeze(-1).to(device)
@@ -322,7 +329,10 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             state_action_traj = self.state_adaptor(noisy_action)
             
             # Predict the model output
-            pred_velocity = self.model(state_action_traj, timesteps, scene_cond)
+            if kv_cache is None:
+                pred_velocity = self.model(state_action_traj, timesteps, scene_cond)
+            else:
+                pred_velocity = self.model(state_action_traj, timesteps, scene_cond, kv_cache=kv_cache)
             pred_velocity = self._zero_static_joints(pred_velocity)
             
             # Compute previous actions: x_t -> x_t-1
@@ -341,7 +351,8 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         self, 
         obs_dict: Dict[str, torch.Tensor], 
         return_flow:bool = False, 
-        gt: Dict[str, torch.Tensor] = None
+        gt: Dict[str, torch.Tensor] = None,
+        use_kv_cache: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
@@ -376,7 +387,9 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         action_mask = self.action_mask.expand(B, -1, -1).to(device=device)
 
         # run sampling
-        nsample, flow = self.conditional_sample(scene_cond, state_traj, action_mask, return_flow)
+        nsample, flow = self.conditional_sample(
+            scene_cond, state_traj, action_mask, return_flow, use_kv_cache=use_kv_cache,
+        )
         
         # unnormalize prediction
         naction_pred = nsample[...,:Da]
