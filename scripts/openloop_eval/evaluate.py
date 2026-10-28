@@ -115,7 +115,7 @@ def build_observation(
     return obs
 
 
-def predict(model, obs, seed, precision):
+def predict(model, obs, seed, precision, use_cuda_graph=True):
     torch.manual_seed(seed)
     cast = (
         torch.autocast("cuda", dtype=torch.bfloat16)
@@ -126,7 +126,7 @@ def predict(model, obs, seed, precision):
     hook = model.model.register_forward_hook(lambda *_: calls.append(1))
     try:
         with torch.inference_mode(), cast:
-            action = model.predict_action(obs)["action"][0].float().cpu().numpy()
+            action = model.predict_action(obs, use_cuda_graph=use_cuda_graph)["action"][0].float().cpu().numpy()
     finally:
         hook.remove()
     if len(calls) != model.num_inference_timesteps:
@@ -292,6 +292,8 @@ def run(args):
         "dataset": str(root),
         "nfe": args.nfe,
         "precision": args.precision,
+        "use_cuda_graph": not args.no_cuda_graph,
+        "cuda_graph_scope": "visual backbone",
         "source_color": args.source_color,
         "n_obs_steps": n_obs,
         "n_image_obs_steps": n_image,
@@ -327,7 +329,8 @@ def run(args):
             noise_seed = (args.seed + episode * 1_000_003 + int(anchors[index])) % (
                 2**31
             )
-            predictions.append(predict(model, obs, noise_seed, args.precision))
+            predictions.append(predict(model, obs, noise_seed, args.precision,
+                                       use_cuda_graph=not args.no_cuda_graph))
             if index % 25 == 0:
                 print(
                     f"episode={episode} chunks={index + 1}/{len(anchors)}", flush=True
@@ -452,7 +455,8 @@ def run(args):
                 )
                 seed = (args.seed + episode * 1_000_003 + int(anchor)) % (2**31)
                 value = predict(
-                    model, obs, seed, "fp32" if variant == "fp32" else args.precision
+                    model, obs, seed, "fp32" if variant == "fp32" else args.precision,
+                    use_cuda_graph=not args.no_cuda_graph,
                 )
                 values.append(value)
                 targets.append(target)
@@ -497,6 +501,8 @@ def parser():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--source-color", choices=["bgr", "rgb"], default="bgr")
     p.add_argument("--precision", choices=["bf16", "fp32"], default="bf16")
+    p.add_argument("--no-cuda-graph", action="store_true",
+                   help="Disable default inference-only visual CUDA Graph replay")
     p.add_argument("--nfe", type=int, default=10)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda:0")

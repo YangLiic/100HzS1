@@ -1,0 +1,566 @@
+{
+  "environment": {
+    "gpu": "NVIDIA L4, GPU-1ec94d36-e6ba-3cdf-4339-81b1950a9818, 535.129.03, 72.00 W",
+    "torch": "2.7.1+cu126",
+    "cuda": "12.6",
+    "precision": "FP32 weights with BF16 autocast",
+    "tf32": false,
+    "batch_definition": "one observation = three RGB views",
+    "timing_excludes_video_decode": true,
+    "capture_scope": "visual backbone only",
+    "kv_cache": true,
+    "rounds": 3,
+    "repeats": 50,
+    "models": {
+      "dinov3_base": {
+        "checkpoint": "/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/dinov3cnnb_3v_obs1_h24_8gpu_L4_20261028/checkpoint-10000",
+        "strict_reload": true,
+        "config_sha256": "ca5eecdc394a2c0fa9253701ae615b963bb8ae9d562a7d065eeb4e51938b055f",
+        "backbone_trainable": false,
+        "parameters": 504783260,
+        "trainable_parameters": 417216526,
+        "vision_parameters": 145279104,
+        "fusion_width": 1024
+      },
+      "efficientvit_b2_projected": {
+        "checkpoint": "/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/efficientvit_b2_3v_obs1_h24_8gpu_L4_20261028/checkpoint-10000",
+        "strict_reload": true,
+        "config_sha256": "5becab780a5a3abf7ec7d725ee4280ffd67410547dc0d439455bc9a8db4bb1c3",
+        "backbone_trainable": false,
+        "parameters": 432588044,
+        "trainable_parameters": 417610766,
+        "vision_parameters": 73083888,
+        "fusion_width": 1024
+      },
+      "efficientvit_b2_native": {
+        "source_checkpoint": "/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/efficientvit_b2_3v_obs1_h24_8gpu_L4_20261028/checkpoint-10000",
+        "speed_only_untrained_native_fusion_and_adapter": true,
+        "description": "same trained backbone, scene/state adaptors, DiT and normalizer; new native-width fusion/compression",
+        "backbone_trainable": false,
+        "parameters": 382853004,
+        "trainable_parameters": 367875726,
+        "vision_parameters": 23348848,
+        "fusion_width": 384
+      }
+    },
+    "data": {
+      "dataset": "/DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14/blocks_ranking_rgb",
+      "episode": 4,
+      "anchors": [
+        30,
+        454
+      ],
+      "source_color": "BGR converted once to RGB",
+      "keys": [
+        "left_cam",
+        "right_cam",
+        "head_cam"
+      ],
+      "image_chw": [
+        3,
+        240,
+        320
+      ],
+      "timing_excludes_video_decode": true
+    }
+  },
+  "checks": [
+    {
+      "model": "dinov3_base",
+      "observation": 0,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "dinov3_base",
+      "observation": 1,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "dinov3_base",
+      "fresh_capture_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "cold_capture_full_prediction_ms": 352.762371301651
+    },
+    {
+      "model": "dinov3_base",
+      "batch2_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          2,
+          23,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "observation": 0,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "observation": 1,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "fresh_capture_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "cold_capture_full_prediction_ms": 373.1641173362732
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "batch2_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          2,
+          23,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "observation": 0,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "observation": 1,
+      "features": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          12,
+          2048
+        ]
+      },
+      "action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "raw": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          24,
+          14
+        ]
+      }
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "fresh_capture_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          1,
+          23,
+          14
+        ]
+      },
+      "cold_capture_full_prediction_ms": 390.4497101902962
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "batch2_action": {
+        "max_abs_error": 0.0,
+        "bitwise_equal": true,
+        "shape": [
+          2,
+          23,
+          14
+        ]
+      }
+    }
+  ],
+  "measurements": [
+    {
+      "model": "dinov3_base",
+      "scope": "visual_encoder",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 12.527179904282093,
+      "p95_ms": 12.671277951449156,
+      "round_p50_ms": [
+        12.39568181335926,
+        12.520072981715202,
+        12.597612105309963
+      ]
+    },
+    {
+      "model": "dinov3_base",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 68.43979377299547,
+      "p95_ms": 69.92515409365296,
+      "round_p50_ms": [
+        69.25846915692091,
+        68.20274610072374,
+        68.14591493457556
+      ]
+    },
+    {
+      "model": "dinov3_base",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 68.95557884126902,
+      "p95_ms": 71.97332167997956,
+      "round_p50_ms": [
+        69.52379830181599,
+        68.80941614508629,
+        68.73599719256163
+      ]
+    },
+    {
+      "model": "dinov3_base",
+      "scope": "visual_encoder",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 11.872757226228714,
+      "p95_ms": 12.019145116209984,
+      "round_p50_ms": [
+        11.84727344661951,
+        11.867859400808811,
+        11.891101486980915
+      ]
+    },
+    {
+      "model": "dinov3_base",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 68.08504275977612,
+      "p95_ms": 71.46688643842934,
+      "round_p50_ms": [
+        68.90018377453089,
+        67.81276036053896,
+        67.54202023148537
+      ]
+    },
+    {
+      "model": "dinov3_base",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 68.97920835763216,
+      "p95_ms": 70.87723137810826,
+      "round_p50_ms": [
+        69.00433357805014,
+        68.45701485872269,
+        69.45514399558306
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "visual_encoder",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 13.435233384370804,
+      "p95_ms": 20.31351570039985,
+      "round_p50_ms": [
+        15.376588329672813,
+        13.389787636697292,
+        13.256562873721123
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 70.92779874801636,
+      "p95_ms": 74.8483918607235,
+      "round_p50_ms": [
+        71.4873718097806,
+        70.70406712591648,
+        70.49840409308672
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 71.02855201810598,
+      "p95_ms": 74.19510427862406,
+      "round_p50_ms": [
+        72.30807188898325,
+        70.6244008615613,
+        70.8259018138051
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "visual_encoder",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 6.451908499002457,
+      "p95_ms": 6.597183458507061,
+      "round_p50_ms": [
+        6.473180837929249,
+        6.407357752323151,
+        6.489783525466919
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 62.95071914792061,
+      "p95_ms": 65.8308893442154,
+      "round_p50_ms": [
+        64.58764150738716,
+        62.75524478405714,
+        62.855640426278114
+      ]
+    },
+    {
+      "model": "efficientvit_b2_projected",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 63.340810127556324,
+      "p95_ms": 65.50091886892913,
+      "round_p50_ms": [
+        63.41793481260538,
+        63.236670568585396,
+        63.531468622386456
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "visual_encoder",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 13.219654560089111,
+      "p95_ms": 13.809766341000795,
+      "round_p50_ms": [
+        13.246292248368263,
+        13.23913037776947,
+        13.197041116654873
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 70.64621243625879,
+      "p95_ms": 74.53985363245008,
+      "round_p50_ms": [
+        70.8361491560936,
+        71.02670706808567,
+        69.83296386897564
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": false,
+      "samples": 150,
+      "p50_ms": 70.98093256354332,
+      "p95_ms": 72.77433266863227,
+      "round_p50_ms": [
+        71.30365911871195,
+        70.73575258255005,
+        71.14523276686668
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "visual_encoder",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 5.63318096101284,
+      "p95_ms": 5.748246051371098,
+      "round_p50_ms": [
+        5.620548501610756,
+        5.6322431191802025,
+        5.646206438541412
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "full_policy_gpu_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 62.55899369716644,
+      "p95_ms": 64.72502052783966,
+      "round_p50_ms": [
+        61.95661332458258,
+        62.915025278925896,
+        63.01349867135286
+      ]
+    },
+    {
+      "model": "efficientvit_b2_native",
+      "scope": "full_policy_host_inputs",
+      "use_cuda_graph": true,
+      "samples": 150,
+      "p50_ms": 63.23300488293171,
+      "p95_ms": 70.97535654902457,
+      "round_p50_ms": [
+        62.41109408438206,
+        62.79242876917124,
+        64.86313045024872
+      ]
+    }
+  ]
+}

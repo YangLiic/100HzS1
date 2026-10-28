@@ -179,3 +179,34 @@ PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 
 源码、YAML、文档和依赖锁文件提交 Git；数据、预训练/训练权重、资产软链接、
 环境、缓存、日志、W&B 与评测输出由 `.gitignore` 排除。
+
+
+### 推理 CUDA Graph（默认开启）
+
+安装代码的 PyTorch 策略入口默认使用 `predict_action(obs, use_cuda_graph=True, use_kv_cache=True)`。
+`use_cuda_graph` 是每次推理调用的运行时参数，不属于训练配置或 checkpoint；旧权重无需重训或转换。
+
+```python
+policy.eval()
+# 默认开启：CUDA / eval / no-grad 时捕获并重放视觉主干。
+result = policy.predict_action(obs)
+# 对照测试或调试时显式关闭。
+result = policy.predict_action(obs, use_cuda_graph=False)
+```
+
+本实现仅捕获视觉主干；图像预处理、投影、视角融合、压缩、DiT 采样保持原有执行方式，
+K/V 缓存开关独立。这样无需更改训练 pipeline、loss 或优化器，也不会固定采样的随机噪声。
+`compute_loss` 和普通编码器调用仍默认 eager，CPU、train 和启用梯度的编码器也保持 eager。
+ONNX / TensorRT 推理不由这个 PyTorch 开关控制。
+
+首次遇到输入形状/精度组合时会预热并捕获，首次调用耗时及显存占用会增加。
+每个视觉编码器最多保留一个图；切换 batch、尺寸、精度或 CUDA stream 时重新捕获。
+捕获前会检查主干中的常见CPU同步/动态输出操作；准备阶段失败会记录 warning 并为当前签名回退到 eager，不会每帧重复尝试。
+若CUDA捕获已开始后发生错误，会明确报错并要求以 `use_cuda_graph=False` 重启推理，避免当前PyTorch版本的捕获失败污染后续随机采样。
+进入训练、移动/转换模型或加载 state_dict 时自动清空图；也可调用
+`policy.obs_encoder.scene_encoder.clear_cuda_graph_cache()` 主动释放。
+直接替换视觉主干内部子模块或修改其执行逻辑后，也应主动清空缓存。
+
+离线评测脚本 `scripts/openloop_eval/evaluate.py` 默认启用，可加 `--no-cuda-graph` 关闭。
+旧的 eager 性能复测脚本已显式传 `use_cuda_graph=False`，保持既有测试口径。
+本次验证及完整策略时延见 [推理 CUDA Graph 报告](docs/VFA/inference_cuda_graph_20261028.md)。

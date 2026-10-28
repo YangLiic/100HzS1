@@ -265,7 +265,7 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         adpated_scene = self.scene_adaptor(scene_tokens)
         return adpated_scene
 
-    def encode_image_conditions(self, nobs, batch_size):
+    def encode_image_conditions(self, nobs, batch_size, use_cuda_graph: bool = False):
         """Encode the latest configured image frames, independently of state."""
         image_nobs = {}
         for key in self.obs_encoder.rgb_key:
@@ -279,7 +279,10 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
                 -1, *image.shape[2:]
             )
 
-        image_features = self.obs_encoder(image_nobs)
+        if use_cuda_graph:
+            image_features = self.obs_encoder(image_nobs, use_cuda_graph=True)
+        else:
+            image_features = self.obs_encoder(image_nobs)
         scene_cond = self.adapt_conditions(image_features)
         return scene_cond.view(batch_size, -1, scene_cond.shape[-1])
     
@@ -353,10 +356,12 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         return_flow:bool = False, 
         gt: Dict[str, torch.Tensor] = None,
         use_kv_cache: bool = True,
+        use_cuda_graph: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
+        use_cuda_graph: eval-only visual backbone replay; CPU/training use eager.
         """
         device = self.device
         dtype = self.dtype
@@ -381,7 +386,9 @@ class VFADitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
         # handle different ways of passing observation
         # condition through global feature
-        scene_cond = self.encode_image_conditions(nobs, B)
+        scene_cond = self.encode_image_conditions(
+            nobs, B, use_cuda_graph=bool(use_cuda_graph and not self.training)
+        )
         state_traj = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
         state_traj[:,:To,:] = nobs[self.action_key][:, :To].view(B, To, -1)
         action_mask = self.action_mask.expand(B, -1, -1).to(device=device)

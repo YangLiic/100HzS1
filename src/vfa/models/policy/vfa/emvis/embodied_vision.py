@@ -8,6 +8,7 @@ from ..common.module_attr_mixin import ModuleAttrMixin
 from .utils import format_number, preprocess_images, param_count
 from .adapter import ResNetAdapter
 from .mv_fuser import MultiViewFuser
+from .inference_cuda_graph import BackboneCudaGraph
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +32,14 @@ class VisualEncoder(ModuleAttrMixin):
         self.out_shape_meta = self.scene_encoder.shape_out
         self.out_dim_meta = self.scene_encoder.dim_out
 
-    def forward(self, obs_dict):
+    def forward(self, obs_dict, use_cuda_graph: bool = False):
         features = list()
         BS = next(iter(obs_dict.values())).shape[0]
         dim = self.scene_encoder.dim_out
 
         # process rgb input
         rgb_image = torch.cat([obs_dict[key].unsqueeze(1) for key in self.rgb_key], dim=1) # BS, V, C, H, W
-        emvis_feat = self.scene_encoder(rgb_image) # BS, V, C, H, W -> BS, V, 1, dim
+        emvis_feat = self.scene_encoder(rgb_image, use_cuda_graph=use_cuda_graph) # BS, V, C, H, W -> BS, V, 1, dim
         out_format = (BS, -1, dim) # BS, V*P, dim / BS, dim
         emvis_feat = emvis_feat.reshape(*out_format)
         features.append(emvis_feat)
@@ -224,15 +225,43 @@ class EmVisRM(nn.Module):
             f"{params_state}"
         )
         logger.info(log_msg)
+        self._backbone_cuda_graph = None
+        self.register_load_state_dict_post_hook(self._clear_cuda_graph_after_load)
 
-    def image_forward(self, origin_images: Tensor):
+    def clear_cuda_graph_cache(self):
+        self._backbone_cuda_graph = None
+
+    def _clear_cuda_graph_after_load(self, module, incompatible_keys):
+        self.clear_cuda_graph_cache()
+
+    def train(self, mode=True):
+        if mode or mode != self.training:
+            self.clear_cuda_graph_cache()
+        return super().train(mode)
+
+    def _apply(self, fn, recurse=True):
+        self.clear_cuda_graph_cache()
+        return super()._apply(fn, recurse=recurse)
+
+    def __getstate__(self):
+        state = super().__getstate__()
+        state['_backbone_cuda_graph'] = None
+        return state
+
+    def image_forward(self, origin_images: Tensor, use_cuda_graph: bool = False):
         # images: [B * S, V, 3, H, W] RGB tensor
         BS, V, _, H_origin, W_origin = origin_images.size()
         images = self.img_processing(origin_images.view(-1, 3, H_origin, W_origin))
         _, _, H, W = images.size()
         images = images.view(BS, V, 3, H, W)
 
-        token_dict = self.backbone(images)
+        if use_cuda_graph and not self.training and BackboneCudaGraph.eligible(self.backbone, images):
+            runner = self._backbone_cuda_graph
+            if runner is None or runner.module_ref() is not self.backbone:
+                runner = self._backbone_cuda_graph = BackboneCudaGraph(self.backbone)
+            token_dict = runner(images)
+        else:
+            token_dict = self.backbone(images)
         token_dict['image_tokens'] = self.backbone_projection(token_dict['image_tokens'])
         return self.token_forward(token_dict)
 
@@ -258,10 +287,11 @@ class EmVisRM(nn.Module):
         logger.debug(f"Token forward time: {time1 - time0:.5f} seconds")
         return scene_features
 
-    def forward(self, images: Tensor = None, image_tokens: Tensor = None, image_pos: Tensor = None, **kwargs):
+    def forward(self, images: Tensor = None, image_tokens: Tensor = None, image_pos: Tensor = None,
+                use_cuda_graph: bool = False, **kwargs):
         if images is not None:
             if len(images.shape) > 5:  # images: [B, S, V, 3, H, W]
                 images = images.view((-1, *images.shape[-4:]))  # images: [B * S, V, 3, H, W]
-            return self.image_forward(images)
+            return self.image_forward(images, use_cuda_graph=use_cuda_graph)
         # Tokens supplied externally (open-loop / ONNX path)
         return self.token_forward({'image_tokens': image_tokens, 'image_tokens_pos': image_pos})

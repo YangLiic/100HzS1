@@ -193,3 +193,12 @@ native 是新的网络结构，不能通过删除一个权重键、设置 `stric
 ## 单图时延的运行时归因
 
 单图eager时延并不直接反映GPU算力成本。最新诊断中，Base/B2 eager为6.70/12.63ms；保持同样计算、改用静态CUDA Graph回放后为4.54/2.25ms，输出最大差异均为0。B2在减少逐算子提交和运行时开销后反超Base。此结果不是已上线的完整策略加速，也不是TensorRT实测。详见 [原因分析](VFA/bs1_cause_analysis_20261028.md) 和 [报告目录](VFA/README.md)。
+
+
+## 推理 CUDA Graph 默认开关（2026-10-28 后续实现）
+
+后续实现已将视觉主干 Graph 接入 PyTorch `predict_action(..., use_cuda_graph=True)`，
+旧 checkpoint 可直接使用，训练 `compute_loss` 保持 eager。`use_kv_cache` 独立且仍默认开启。
+此开关目前仅覆盖视觉主干，未捕获融合、压缩和DiT采样。
+前面的时延表保持原 eager 测量口径，不能当作新默认执行方式的数字。
+完整策略的新对照、输入/动作一致性及限制见 [推理 CUDA Graph 报告](VFA/inference_cuda_graph_20261028.md)。

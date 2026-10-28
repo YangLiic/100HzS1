@@ -163,7 +163,7 @@ def main():
                        transformers=transformers.__version__, python=platform.python_version(),
                        torch_threads=1, cpu_affinity=sorted(os.sched_getaffinity(0)),
                        precision='BF16 autocast; original checkpoint parameter dtypes', tf32=False,
-                       compile=False, nfe=10, horizon=24, n_obs=1, n_image_obs=1,
+                       compile=False, cuda_graph=False, nfe=10, horizon=24, n_obs=1, n_image_obs=1,
                        batch_definition='one synchronized observation = three RGB camera images plus proprioception',
                        rounds=args.rounds, repeats_per_round=args.repeats, warmup_per_case=args.warmup,
                        script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
@@ -186,7 +186,7 @@ def main():
                     for enabled in (False, True):
                         counts[:] = [0] * len(counts)
                         torch.manual_seed(42)
-                        outputs[enabled] = model.predict_action(gpu[batch], use_kv_cache=enabled)['action']
+                        outputs[enabled] = model.predict_action(gpu[batch], use_kv_cache=enabled, use_cuda_graph=False)['action']
                         calls[str(enabled)] = list(counts)
                 finally:
                     for hook in hooks: hook.remove()
@@ -203,10 +203,10 @@ def main():
                           lambda m=model, b=batch: m.obs_encoder(vision[b])))
             for cache in (False, True):
                 cases.append((name, batch, 'full_policy_gpu_inputs', cache,
-                              lambda m=model, b=batch, enabled=cache: m.predict_action(gpu[b], use_kv_cache=enabled)))
+                              lambda m=model, b=batch, enabled=cache: m.predict_action(gpu[b], use_kv_cache=enabled, use_cuda_graph=False)))
             if batch == 1:
                 cases.append((name, batch, 'full_policy_host_float_inputs', True,
-                              lambda m=model, b=batch: m.predict_action(host[b], use_kv_cache=True)))
+                              lambda m=model, b=batch: m.predict_action(host[b], use_kv_cache=True, use_cuda_graph=False)))
     records = []
     def save(record):
         records.append(record)
