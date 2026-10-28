@@ -218,7 +218,11 @@ class Base_Task(gym.Env):
 
         # declare sapien scene
         scene_config = sapien.SceneConfig()
-        self.scene = self.engine.create_scene(scene_config)
+        sapien.physx.set_scene_config(scene_config)
+        self.scene = sapien.Scene([
+            sapien.physx.PhysxCpuSystem(),
+            sapien.render.RenderSystem("cuda:0"),
+        ])
         # set simulation timestep
         self.scene.set_timestep(kwargs.get("timestep", 1 / 250))
         # add ground to scene

@@ -56,12 +56,10 @@ class VisualEncoder(ModuleAttrMixin):
 
 
 class EmVisRM(nn.Module):
-    """VFA vision tower: DINOv3-CNN backbone -> (optional) MultiViewFuser -> ResNetAdapter.
+    """Spatial backbone -> channel alignment -> MultiViewFuser -> ResNetAdapter.
 
-    Fixed architecture:
-    - backbone supports only the dinov3cnn family (DINOv3Encoder)
-    - 2D-only token flow
-    - model_adapter is always ResNetAdapter
+    DINOv3 ConvNeXt keeps its original state keys and pixel processing.
+    MIT EfficientViT projects native spatial channels to the same policy width.
     """
 
     def __init__(
@@ -93,31 +91,48 @@ class EmVisRM(nn.Module):
         self.img_processing = None
         self.dim_2d = dim_2d if dim_2d != None else 1024
 
-        # initialize backbone (dinov3cnn only)
         self.backbone_target = backbone_target.lower()
-        assert 'dinov3' in self.backbone_target and 'cnn' in self.backbone_target, (
-            f"Only dinov3cnn-family backbones are supported, got backbone_target={backbone_target!r}"
-        )
-        from .encoder.dinov3cnn_encoder import DINOv3Encoder
-        from transformers import DINOv3ConvNextConfig as DINOv3Config
-        from transformers import DINOv3ViTImageProcessorFast
-        from transformers import AutoImageProcessor, AutoConfig
-        if backbone_config:
-            config = DINOv3Config(**backbone_config)
-        else:
-            config = AutoConfig.from_pretrained(f"{backbone_path}")
+        if 'dinov3' in self.backbone_target and 'cnn' in self.backbone_target:
+            # Preserve the original DINOv3 initialization and checkpoint layout.
+            from .encoder.dinov3cnn_encoder import DINOv3Encoder
+            from transformers import DINOv3ConvNextConfig as DINOv3Config
+            from transformers import DINOv3ViTImageProcessorFast
+            from transformers import AutoImageProcessor, AutoConfig
+            if backbone_config:
+                config = DINOv3Config(**backbone_config)
+            else:
+                config = AutoConfig.from_pretrained(f"{backbone_path}")
 
-        self.backbone = DINOv3Encoder(config)
-        load_pretrain = processor_config.pop('load_pretrain', False)
-        if load_pretrain:  # train init
-            do_resize = processor_config.pop('do_resize', False)
-            do_rescale = processor_config.pop('do_rescale', False)
-            processor = AutoImageProcessor.from_pretrained(
-                backbone_path, do_resize=do_resize, do_rescale=do_rescale,
+            self.backbone = DINOv3Encoder(config)
+            self.backbone_projection = nn.Identity()
+            load_pretrain = processor_config.pop('load_pretrain', False)
+            if load_pretrain:
+                do_resize = processor_config.pop('do_resize', False)
+                do_rescale = processor_config.pop('do_rescale', False)
+                processor = AutoImageProcessor.from_pretrained(
+                    backbone_path, do_resize=do_resize, do_rescale=do_rescale,
+                )
+                processor_config.update(processor.to_dict())
+            else:
+                processor = DINOv3ViTImageProcessorFast(**processor_config)
+        elif self.backbone_target == 'efficientvit':
+            from .encoder.efficientvit_encoder import EfficientViTEncoder
+            from transformers import DINOv3ViTImageProcessorFast
+
+            self.backbone = EfficientViTEncoder(
+                **backbone_config, frozen=not self.backbone_trainable,
             )
-            processor_config.update(processor.to_dict())
-        else:  # inference init
+            # This bridge remains trainable even when the trunk is frozen.
+            self.backbone_projection = nn.Linear(self.backbone.out_channels, self.dim_2d)
+            # Use the same geometric preprocessing and ImageNet normalization
+            # as DINOv3, with no square crop to the classifier's nominal size.
+            processor_config.pop('load_pretrain', None)
+            processor_config.setdefault('do_resize', False)
+            processor_config.setdefault('do_rescale', False)
             processor = DINOv3ViTImageProcessorFast(**processor_config)
+            processor_config.update(processor.to_dict())
+        else:
+            raise ValueError(f"Unsupported visual backbone: {backbone_target!r}")
         self.img_processing = lambda x: processor(
             preprocess_images(x, interpolate=interpolate, patch_size=self.backbone.patch_size_log),
             return_tensors="pt",
@@ -193,6 +208,7 @@ class EmVisRM(nn.Module):
         images = images.view(BS, V, 3, H, W)
 
         token_dict = self.backbone(images)
+        token_dict['image_tokens'] = self.backbone_projection(token_dict['image_tokens'])
         return self.token_forward(token_dict)
 
     def token_forward(self, token_dict: Dict):

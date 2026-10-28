@@ -35,3 +35,6 @@ save_path: ./data
 clear_cache_freq: 5
 collect_data: true
 eval_video_log: true
+
+# Owned runtime profile; keep shared asset configs read-only.
+motion_planner: curobo

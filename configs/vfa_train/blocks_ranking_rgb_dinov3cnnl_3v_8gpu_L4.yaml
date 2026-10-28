@@ -33,10 +33,11 @@ train_dataset:
 num_train_epochs: 200
 train_batch_size: 128
 dataloader_num_workers: 64
-# VFA uses three state frames and only the latest image from each camera.
-n_obs_steps: 3
+# One current state and one current image per view; no observation history.
+# horizon includes the observed state: 1 condition + 23 future actions.
+n_obs_steps: 1
 n_image_obs_steps: 1
-horizon: 8
+horizon: 24
 
 model:
   action_key: state
@@ -48,7 +49,7 @@ model:
 
 # This run initializes the policy head anew; no policy checkpoint was supplied.
 resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/blocks_ranking_rgb/dinov3cnnl_3v_8gpu_L4_20261028
+output_dir: ${checkpoint_root}/blocks_ranking_rgb/dinov3cnnl_3v_obs1_h24_8gpu_L4_20261028
 base_dir: ${output_dir}
 hydra:
   run:

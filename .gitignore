@@ -1,7 +1,10 @@
 # Local data, weights, experiment outputs and secrets
 .env
 .env.*
+!.env.example
+.netrc
 .venv/
+.venv-*/
 venv/
 __pycache__/
 *.py[cod]
@@ -24,8 +27,16 @@ dist/
 *.safetensors
 *.onnx
 *.engine
+*.ckpt
+*.bin
+*.so
+*.o
+*.a
 *.npy
 *.npz
+*.mp4
+*.avi
+*.webm
 /data/
 /datasets/
 /runs/
@@ -42,9 +53,7 @@ dist/
 /.train_*/
 /research/
 /handoff.md
-/docs/*
-!/docs/README.md
-!/docs/performance_optimization.md
+# Keep source documentation and YAML configurations in version control.
 
 # RobotWin2 runtime assets and external cuRobo installation
 /simulation/robotwin/

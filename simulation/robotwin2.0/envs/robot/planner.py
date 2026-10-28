@@ -3,6 +3,8 @@ import mplib
 import numpy as np
 import pdb
 import traceback
+from copy import deepcopy
+from pathlib import Path
 import numpy as np
 import toppra as ta
 from mplib.sapien_utils import SapienPlanner, SapienPlanningWorld
@@ -53,6 +55,12 @@ try:
                 yml_data = yaml.safe_load(f)
             self.frame_bias = yml_data["planner"]["frame_bias"]
 
+            # Resolve shared asset references into this checkout in memory.
+            kinematics = yml_data["robot_cfg"]["kinematics"]
+            for key, value in list(kinematics.items()):
+                if isinstance(value, str) and "/assets/" in value:
+                    kinematics[key] = str(Path(CONFIGS.ASSETS_PATH) / value.split("/assets/", 1)[1])
+
             # motion generation
             if True:
                 world_config = {
@@ -72,7 +80,7 @@ try:
                     }
                 }
             motion_gen_config = MotionGenConfig.load_from_robot_config(
-                self.yml_path,
+                deepcopy(yml_data),
                 world_config,
                 interpolation_dt=1 / 250,
                 num_trajopt_seeds=1,
@@ -81,7 +89,7 @@ try:
             self.motion_gen = MotionGen(motion_gen_config)
             self.motion_gen.warmup()
             motion_gen_config = MotionGenConfig.load_from_robot_config(
-                self.yml_path,
+                deepcopy(yml_data),
                 world_config,
                 interpolation_dt=1 / 250,
                 num_trajopt_seeds=1,
@@ -270,11 +278,10 @@ try:
             result_q = t3d.quaternions.mat2quat(wRb.T @ wRt)
             return result_p, result_q
     
-except Exception as e:
-    print('[planner.py]: Something wrong happened when importing CuroboPlanner! Please check if Curobo is installed correctly. If the problem still exists, you can install Curobo from https://github.com/NVlabs/curobo manually.')
-    print('Exception traceback:')
-    traceback.print_exc()
-
+except (ImportError, OSError) as error:
+    raise ImportError(
+        "cuRobo is required by this runtime; run script/setup_curobo.sh in its unified environment."
+    ) from error
 
 # ********************** MplibPlanner **********************
 class MplibPlanner:

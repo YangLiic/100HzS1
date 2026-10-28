@@ -32,12 +32,9 @@ try:
 
         return sampled_points, indices
 
-except:
-    print("missing pytorch3d")
-
+except ImportError:
     def fps(points, num_points=1024, use_cuda=True):
-        print("fps error: missing pytorch3d")
-        exit()
+        raise ImportError("Point-cloud FPS requires optional PyTorch3D; RGB evaluation does not.")
 
 
 class Camera:
