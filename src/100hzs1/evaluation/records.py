@@ -55,6 +55,7 @@ def collect(output, groups, gpus, require_complete=False):
             state["updated_at"] = event["at"]
             if kind == "runtime":
                 state.update(status="running", runtime=event["runtime"])
+                state.pop("error", None)
             elif kind == "started":
                 if event["seed"] not in expected:
                     raise ValueError(f"GPU{gpu}: unexpected seed")
@@ -76,6 +77,11 @@ def collect(output, groups, gpus, require_complete=False):
                 state.update(status="completed", current_seed=None, **event.get("graph", {}))
             elif kind == "failed":
                 state.update(status="failed", error=event["error"])
+            elif kind == "retry":
+                state.update(status="retrying", restarts=event["attempt"])
+                state.pop("error", None)
+            elif kind == "resume":
+                state.update(status="starting", resumed_from=event["source"])
             else:
                 raise ValueError(f"Unknown worker event: {kind}")
         state.update(completed=len(local), successes=sum(r["success"] for r in local))
@@ -111,3 +117,40 @@ def snapshot(manifest, output, groups, gpus, status="running", error=None, final
         value["finished_at"] = now()
     atomic_json(Path(output) / "result.json", value)
     return value
+
+def restore_progress(source, output, manifest, groups, gpus):
+    """Copy completed episodes into a fresh run; never reevaluate or replace their outcomes."""
+    import shutil
+    source, output = Path(source).resolve(), Path(output).resolve()
+    old = json.loads((source / "result.json").read_text())
+    if source == output or old["status"] not in {"failed", "interrupted"}:
+        raise ValueError("Resume requires a failed/interrupted source and a fresh destination")
+    for key in ("checkpoint", "checkpoint_config_sha256", "task", "task_config", "seed_groups",
+                "gpus", "nfe", "use_cuda_graph", "use_kv_cache", "precision", "channels"):
+        if old.get(key) != manifest.get(key):
+            raise ValueError(f"Cannot resume after changing {key}")
+    rows, states = collect(source, groups, gpus)
+    if rows != old["results"]:
+        raise ValueError("Source summary and journals disagree")
+    for gpu, seeds in zip(gpus, groups):
+        local = [row for row in rows if row["gpu"] == gpu]
+        journal = output / "logs" / f"gpu{gpu}.jsonl"
+        append_event(journal, "resume", source=str(source))
+        for row in local:
+            row = dict(row)
+            row.pop("gpu")
+            if row.get("video"):
+                expected = f"videos/seed_{row['seed']}.mp4"
+                if row["video"] != expected:
+                    raise ValueError("Unexpected source video path")
+                src = source / expected
+                if not src.is_file() or not src.stat().st_size:
+                    raise ValueError(f"Missing source video: {src}")
+                shutil.copy2(src, output / expected)
+            append_event(journal, "episode", record=row)
+        if len(local) == len(seeds):
+            state = states[str(gpu)]
+            append_event(journal, "runtime", runtime=state.get("runtime", {}))
+            append_event(journal, "completed",
+                         graph={k: state[k] for k in ("graph_captures", "graph_replays") if k in state})
+    manifest.update(resumed_from=str(source), preserved_episodes=len(rows))

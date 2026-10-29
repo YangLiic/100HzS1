@@ -73,7 +73,7 @@ def merge_results(output, groups, gpus):
 
 
 def terminate(process):
-    if process.poll() is None:
+    if process is not None and process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=15)
@@ -101,6 +101,8 @@ def main():
     parser.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--precision", choices=["bf16", "fp32"], default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume-from", type=Path)
+    parser.add_argument("--max-worker-restarts", type=int, default=3)
     args = parser.parse_args()
     options = load_inference_options(args.inference_config, {
         "num_inference_timesteps": args.nfe, "use_cuda_graph": args.cuda_graph,
@@ -111,7 +113,7 @@ def main():
     args.kv_cache = options["use_kv_cache"]
     args.precision = options["precision"]
     if (
-        args.nfe < 1
+        args.nfe < 1 or args.max_worker_restarts < 0
         or len(set(args.gpus)) != len(args.gpus)
         or any(g < 0 for g in args.gpus)
     ):
@@ -181,35 +183,55 @@ def run_workers(args, manifest, groups, worker_entry=None, interval=1):
     manifest["started_at"] = records.now()
     manifest["checkpoint_config_sha256"] = hashlib.sha256(
         (args.checkpoint / "config.json").read_bytes()).hexdigest()
-    processes, handles = [], []
+    manifest = dict(manifest)
+    manifest.update(checkpoint=str(args.checkpoint.resolve()), task=args.task,
+        task_config=args.task_config, seed_groups=groups, gpus=args.gpus, nfe=args.nfe,
+        use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache, precision=args.precision,
+        channels="RGB_no_flip", max_worker_restarts=getattr(args, "max_worker_restarts", 3))
+    processes, handles, commands, environments = [], [], [], []
     worker_entry = worker_entry or ROOT / "script/eval_policy.py"
+    restarts = [0] * len(args.gpus)
 
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)
+
+    def launch(index):
+        return subprocess.Popen(commands[index], cwd=ROOT, env=environments[index],
+            stdout=handles[index], stderr=subprocess.STDOUT, start_new_session=True)
 
     previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGINT)}
     records.snapshot(manifest, args.output, groups, args.gpus)
     last_completed = -1
     try:
-        for gpu, seeds in zip(args.gpus, groups):
+        source = getattr(args, "resume_from", None)
+        if source:
+            records.restore_progress(source, args.output, manifest, groups, args.gpus)
+            records.snapshot(manifest, args.output, groups, args.gpus)
+        saved, _ = records.collect(args.output, groups, args.gpus)
+        for index, (gpu, seeds) in enumerate(zip(args.gpus, groups)):
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu), GPU_ID=str(gpu),
                        KRAKEN_EGL_DEVICE=str(gpu), PYTHONUNBUFFERED="1", S1_JPEG_ROUNDTRIP="1")
-            handle = (args.output / "logs" / f"gpu{gpu}.log").open("w")
+            environments.append(env)
+            handle = (args.output / "logs" / f"gpu{gpu}.log").open("a")
             handles.append(handle)
             command = [sys.executable, "-u", str(worker_entry),
-                       "--checkpoint", str(args.checkpoint),
-                       "--output", str(args.output),
+                       "--checkpoint", str(args.checkpoint), "--output", str(args.output),
                        "--journal", str(args.output / "logs" / f"gpu{gpu}.jsonl"),
                        "--seeds", *map(str, seeds), "--task", args.task,
                        "--task-config", args.task_config, "--nfe", str(args.nfe),
                        "--cuda-graph" if args.cuda_graph else "--no-cuda-graph",
                        "--kv-cache" if args.kv_cache else "--no-kv-cache",
                        "--precision", args.precision]
+            if source:
+                command.append("--resume")
             if args.inference_config:
                 command += ["--inference-config", str(args.inference_config.resolve())]
-            processes.append(subprocess.Popen(command, cwd=ROOT, env=env, stdout=handle,
-                                              stderr=subprocess.STDOUT, start_new_session=True))
-            print(f"WORKER_STARTED gpu={gpu} episodes={len(seeds)}", flush=True)
+            commands.append(command)
+            if sum(row["gpu"] == gpu for row in saved) == len(seeds):
+                processes.append(None)
+            else:
+                processes.append(launch(index))
+                print(f"WORKER_STARTED gpu={gpu} episodes={len(seeds)}", flush=True)
         while True:
             current = records.snapshot(manifest, args.output, groups, args.gpus)
             if current["completed_episodes"] != last_completed:
@@ -219,14 +241,27 @@ def run_workers(args, manifest, groups, worker_entry=None, interval=1):
                       f"successes={current['successes']} success_rate={rate_text} "
                       "(completed episodes)", flush=True)
                 last_completed = current["completed_episodes"]
-            codes = [p.poll() for p in processes]
-            if any(code not in (None, 0) for code in codes):
-                raise RuntimeError("Evaluation worker failed; inspect logs/gpuN.log")
+            codes = [p.poll() if p is not None else 0 for p in processes]
+            for index, code in enumerate(codes):
+                if code in (None, 0):
+                    continue
+                gpu = args.gpus[index]
+                journal = args.output / "logs" / f"gpu{gpu}.jsonl"
+                events = records.read_events(journal)
+                retryable = events and events[-1]["event"] == "failed" and events[-1].get("retryable_scene") is True
+                if not retryable or restarts[index] >= manifest["max_worker_restarts"]:
+                    raise RuntimeError(f"GPU{gpu} worker exited {code}; inspect logs/gpu{gpu}.log")
+                restarts[index] += 1
+                records.append_event(journal, "retry", attempt=restarts[index], error=events[-1]["error"])
+                if "--resume" not in commands[index]:
+                    commands[index].append("--resume")
+                processes[index] = launch(index)
+                codes[index] = None
+                print(f"WORKER_SCENE_RETRY gpu={gpu} restart={restarts[index]} same_seeds=True", flush=True)
             if all(code == 0 for code in codes):
                 break
             time.sleep(interval)
-        result = records.snapshot(manifest, args.output, groups, args.gpus,
-                                  status="completed", final=True)
+        result = records.snapshot(manifest, args.output, groups, args.gpus, status="completed", final=True)
         print(f"EVALUATION_COMPLETED successes={result['successes']}/"
               f"{result['completed_episodes']} = {result['success_rate']:.2%}", flush=True)
         return result
@@ -235,10 +270,9 @@ def run_workers(args, manifest, groups, worker_entry=None, interval=1):
             terminate(process)
         try:
             records.snapshot(manifest, args.output, groups, args.gpus,
-                             status="interrupted" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "failed",
-                             error=exc)
+                status="interrupted" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "failed",
+                error=exc)
         except Exception:
-            # A corrupt journal must not erase the last valid progress snapshot.
             current = json.loads((args.output / "result.json").read_text())
             current.update(status="failed", error=str(exc), updated_at=records.now())
             records.atomic_json(args.output / "result.json", current)

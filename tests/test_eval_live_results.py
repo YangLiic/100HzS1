@@ -25,14 +25,22 @@ p.add_argument("--seeds",type=int,nargs="+")
 p.add_argument("--task")
 a,_=p.parse_known_args()
 r=import_module("100hzs1.evaluation.records")
+done=[e["record"]["seed"] for e in r.read_events(a.journal) if e["event"]=="episode"]
 r.append_event(a.journal,"runtime",runtime={"fake":True})
 for seed in a.seeds:
+    if seed in done:continue
     r.append_event(a.journal,"started",seed=seed)
     time.sleep(.015*(int(os.environ["GPU_ID"])+1))
     name=f"videos/seed_{seed}.mp4"
     (a.output/name).write_bytes(b"fixture")
     r.append_event(a.journal,"episode",record=dict(seed=seed,success=seed%2==0,video=name))
     if a.task=="failure":raise SystemExit(2)
+    marker=a.output.parent/("gpu"+os.environ["GPU_ID"]+"_retried")
+    if a.task=="retry_scene" and not marker.exists():
+        marker.touch()
+        r.append_event(a.journal,"failed",error="Expert scene check failed for pinned seed",
+                       retryable_scene=True)
+        raise SystemExit(2)
 r.append_event(a.journal,"completed",graph={"graph_captures":1,"graph_replays":len(a.seeds)})
 """
 
@@ -82,6 +90,40 @@ class LiveResultsTest(unittest.TestCase):
             self.assertEqual(value["status"],"failed")
             self.assertLess(value["completed_episodes"],100)
             self.assertIn("error",value)
+
+    def test_same_seed_restart_keeps_completed_episodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args,worker=self.arguments(Path(tmp),"retry_scene")
+            groups=[list(range(i*3,(i+1)*3)) for i in range(4)]
+            value=controller.run_workers(args,dict(task=args.task),groups,worker_entry=worker,interval=.03)
+            self.assertEqual(value["status"],"completed")
+            self.assertEqual(value["completed_episodes"],12)
+            self.assertEqual(len({r["seed"] for r in value["results"]}),12)
+            self.assertTrue(all(w.get("restarts")==1 for w in value["workers"].values()))
+
+    def test_resume_preserves_old_outcomes_and_rejects_changed_inference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);args,worker=self.arguments(root)
+            groups=[list(range(i*3,(i+1)*3)) for i in range(4)]
+            worker.write_text(FAKE.replace('if a.task=="failure":','if True:'))
+            with self.assertRaises(RuntimeError):
+                controller.run_workers(args,dict(task=args.task),groups,worker_entry=worker,interval=.03)
+            source=args.output
+            old=json.loads((source/"result.json").read_text())
+            self.assertGreater(old["completed_episodes"],0)
+            args.resume_from=source
+            args.output=root/"invalid_resume";args.nfe=4
+            with self.assertRaises(ValueError):
+                controller.run_workers(args,dict(task=args.task),groups,worker_entry=worker,interval=.03)
+            args.output=root/"resumed";args.nfe=10
+            worker.write_text(FAKE)
+            final=controller.run_workers(args,dict(task=args.task),groups,worker_entry=worker,interval=.03)
+            self.assertEqual(final["status"],"completed")
+            self.assertEqual(final["completed_episodes"],12)
+            self.assertEqual(final["preserved_episodes"],old["completed_episodes"])
+            by_seed={row["seed"]:row for row in final["results"]}
+            for row in old["results"]:
+                self.assertEqual(by_seed[row["seed"]],row)
 
     def test_duplicate_wrong_gpu_and_partial_last_line(self):
         with tempfile.TemporaryDirectory() as tmp:

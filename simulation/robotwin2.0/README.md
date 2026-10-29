@@ -152,6 +152,12 @@ result.json 在运行中约每秒原子更新，随时可打开：
 失败或中断会保留已完成结果；运行中成功率不应当作最终100集成功率。
 不记录单次推理延迟。
 
+专家复检的暂时失败会保留同一 seed，在独立 worker 进程中最多重试3次；
+已完成 episode 不重跑，其他卡继续推进。其他错误仍明确终止。
+中断后可在新目录继续：追加 --resume-from /absolute/failed_run --output /absolute/new_run。
+程序校验权重、固定种子、NFE、Graph/KV/精度和颜色设置一致，复制已完成记录与视频，
+只运行未完成的 seed；旧结果原样保留。--max-worker-restarts 可调整重试上限。
+
 实时查看简洁汇总和最近 episode：
 
 ~~~bash

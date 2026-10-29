@@ -205,6 +205,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--task", default="beat_block_hammer")
     parser.add_argument("--task-config", default="demo_clean")
     parser.add_argument("--nfe", type=int, default=None)
@@ -224,8 +225,12 @@ def main():
     seeds = args.seeds
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("Need distinct pinned seeds")
-    if args.journal.exists():
-        raise FileExistsError("Use a fresh journal")
+    completed = [event["record"]["seed"] for event in records.read_events(args.journal)
+                 if event["event"] == "episode"]
+    if args.journal.exists() and not args.resume:
+        raise FileExistsError("Use a fresh journal or an explicit resume")
+    if completed != seeds[:len(completed)]:
+        raise ValueError("Resume journal must be an exact completed prefix")
     args.journal.parent.mkdir(parents=True, exist_ok=True)
     video_dir = args.output / "videos"
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -240,6 +245,8 @@ def main():
         kwargs["ckpt_setting"] = str(args.checkpoint)
         environment = getattr(importlib.import_module(f"envs.{args.task}"), args.task)()
         for index, seed in enumerate(seeds):
+            if index < len(completed):
+                continue
             print(f"EPISODE_STARTED index={index+1}/{len(seeds)} seed={seed}", flush=True)
             records.append_event(args.journal, "started", seed=seed)
             record = run_episode(environment, model, policy, seed, index, kwargs, video_size, video_dir)
@@ -256,7 +263,8 @@ def main():
         records.append_event(args.journal, "completed", graph=graph_stats)
         print("WORKER_COMPLETED", flush=True)
     except BaseException as exc:
-        records.append_event(args.journal, "failed", error=f"{type(exc).__name__}: {exc}")
+        records.append_event(args.journal, "failed", error=f"{type(exc).__name__}: {exc}",
+            retryable_scene=isinstance(exc, RuntimeError) and str(exc).startswith("Expert scene check failed for pinned seed"))
         raise
 
 
