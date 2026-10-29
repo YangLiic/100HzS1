@@ -1,4 +1,4 @@
-# VFA EfficientViT 接入与首轮实测
+# 100HzS1 EfficientViT 接入与首轮实测
 
 观测日期：2026-10-28。编码器适配和时延对比已完成。首轮训练已结束；当前重训使用单帧观测、horizon24。开环误差可核对输入与动作对齐，不能替代闭环任务成功率。
 
@@ -53,12 +53,12 @@ machine2同一张NVIDIA L4，驱动535.129.03，PyTorch2.7.1+cu126、timm1.0.15�
 
 ## 修改的位置与切换
 
-所有代码直接在开发机 `/data/vepfs/licheng.yang/VFA` 修改。
+所有代码直接在开发机 `/data/vepfs/licheng.yang/100HzS1` 修改。
 
-- `src/vfa/models/policy/vfa/emvis/encoder/efficientvit_encoder.py`：timm MIT B系列包装器、严格加载本地safetensors、空间token格式、坐标和冻结BN。
-- `src/vfa/models/policy/vfa/emvis/embodied_vision.py`：新增efficientvit分支及通道对齐，保留DINO分支初始化、参数键和输出。token_forward仍接受已对齐的1024维特征。
-- `configs/vfa_train/observation_config/efficientvit_b2_3v.yaml`、`efficientvit_b3_3v.yaml`：完整视觉配置。
-- `configs/vfa_train/blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4.yaml`、B3对应文件：独立实验配置，继承相同训练配方。
+- `src/100hzs1/models/policy/flow_matching/emvis/encoder/efficientvit_encoder.py`：timm MIT B系列包装器、严格加载本地safetensors、空间token格式、坐标和冻结BN。
+- `src/100hzs1/models/policy/flow_matching/emvis/embodied_vision.py`：新增efficientvit分支及通道对齐，保留DINO分支初始化、参数键和输出。token_forward仍接受已对齐的1024维特征。
+- `configs/100hzs1_train/observation_config/efficientvit_b2_3v.yaml`、`efficientvit_b3_3v.yaml`：完整视觉配置。
+- `configs/100hzs1_train/100hzs1_blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4.yaml`、B3对应文件：独立实验配置，继承相同训练配方。
 - `tools/benchmark_visual_backbones.py`、`tools/download_efficientvit_weights.py`、`tools/check_policy_checkpoint.py`：可复现测量、固定版本下载与严格离线策略重载验证。
 - `tests/test_visual_backbones.py`：DINO回归、形状、冻结BN、投影梯度、严格加载和离线重建测试。
 
@@ -67,13 +67,13 @@ machine2同一张NVIDIA L4，驱动535.129.03，PyTorch2.7.1+cu126、timm1.0.15�
 启动B2示例（已有正式训练在跑，不要重复执行）：
 
 ```bash
-cd /data/vepfs/licheng.yang/VFA
+cd /data/vepfs/licheng.yang/100HzS1
 NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 \
   bash scripts/train/train.sh \
-  configs/vfa_train/blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4.yaml
+  configs/100hzs1_train/100hzs1_blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4.yaml
 ```
 
-Base顶层配置为 `blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4.yaml`。每次新实验应修改output_dir避免覆盖产物。整个策略checkpoint包含新主干和对齐层，重新加载时load_backbone_pretrain=false，无需再下载原始预训练文件。
+Base顶层配置为 `100hzs1_blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4.yaml`。每次新实验应修改output_dir避免覆盖产物。整个策略checkpoint包含新主干和对齐层，重新加载时load_backbone_pretrain=false，无需再下载原始预训练文件。
 
 ## 当前训练配方
 
@@ -93,12 +93,11 @@ RMSE：Base 0.01566 rad、B2 0.01532 rad。流程见
 [RoboTwin README](../simulation/robotwin2.0/README.md)。
 
 
-## 原生宽度融合与旧训练兼容
+## 原生宽度融合
 
 `EmVisRM` 新增 `efficientvit_fusion_mode`，只影响 EfficientViT：
 
 - `projected`：保持原结构，先 Linear(384/512, dim_2d)，再融合、压缩。
-  仅历史 checkpoint 缺少字段时由加载器补为此模式，保留旧参数尺寸和顺序。
 - `native`（代码与共享配置默认）：从 `backbone.out_channels` 自动取得 B2=384、B3=512，忽略旧的 `dim_2d`；
   前置投影为 Identity，MultiViewFuser 和 ResNetAdapter 输入都使用原生宽度。
   `model_adapter_config.dim_out` 仍设为 1024，末尾已有的 Linear 完成升维，
@@ -119,21 +118,19 @@ RMSE：Base 0.01566 rad、B2 0.01532 rad。流程见
 独立训练配置为：
 
 ```text
-configs/vfa_train/blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml
-configs/vfa_train/blocks_ranking_rgb_efficientvit_b3_native_3v_8gpu_L4.yaml
+configs/100hzs1_train/100hzs1_blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml
+configs/100hzs1_train/100hzs1_blocks_ranking_rgb_efficientvit_b3_native_3v_8gpu_L4.yaml
 ```
 
 这两份配置继承原训练配方，但输出目录名含 `_native_`，不会与既有投影实验共用目录。
-旧 checkpoint 缺少模式字段，加载时仍构建 projected 结构；新训练默认 native。
-继续旧实验必须显式设置 projected 和 dim_2d=1024，并沿用原输出目录。
+当前训练默认 native；本包只加载当前 100hzs1 元数据，不提供旧命名 checkpoint 兼容。
 
 native 是新的网络结构，不能通过删除一个权重键、设置 `strict=False` 或恢复旧优化器状态实现等价转换。
 切换时应另开实验，继续加载同一 EfficientViT 预训练主干，重新训练融合/压缩层。
 后续策略层虽可单独迁移，但这属于显式的部分初始化，不是无缝续训，本次未自动迁移。
 
-验证覆盖 B2/B3 原生宽度前向、反向、冻结 BN、配置 JSON 重建和严格权重重载；
-另对照变更前代码验证旧模式的参数键、优化器恢复后一次更新逐值一致，
-并保留 DINOv3 原有 checkpoint 键和前向逐值一致的回归检查。
+验证覆盖 B2/B3 原生宽度前向、反向、冻结 BN、配置 JSON 重建和严格权重重载。
+以下 2026-10-28 数值是改名前实验的记录，不是当前默认值或当前包的兼容性承诺。
 
 
 本次 native 改动的 CPU 验证结果：16 项视觉/历史元数据测试全部通过；
@@ -166,9 +163,9 @@ native 是新的网络结构，不能通过删除一个权重键、设置 `stric
 
 截图中的官方分类模型表使用Jetson/A100和TensorRT FP16；这里是L4的三视角PyTorch策略，两种口径不能直接比较。单机器人更应看batch1响应延迟和p95，多batch推理也可用于多机器人或并行仿真，并不只代表训练速度。
 
-完整方法、分轮数据、CPU输入/H2D、交错验证和官方来源见 [完整报告](VFA/l4_latency_review_20261028.md)。
+完整方法、分轮数据、CPU输入/H2D、交错验证和官方来源见 [完整报告](100HzS1/l4_latency_review_20261028.md)。
 
-测试脚本：`tools/benchmark_vfa_policy.py`。原始结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_l4_latency_review_v1/{legacy_retest,full_v2,paired_b1}`。
+测试脚本：`tools/benchmark_s1_policy.py`。原始结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/benchmarks/20261028_l4_latency_review_v1/{legacy_retest,full_v2,paired_b1}`。
 
 
 ## 补充：真正单张图 batch=1 的编码器测量
@@ -186,12 +183,12 @@ native 是新的网络结构，不能通过删除一个权重键、设置 `stric
 
 每组450样本（3轮×150），每段30次预热。FP32权重，TF32关闭，不编译；FP16 autocast也不等同于TensorRT FP16。尚不能外推到其他部署后端。
 
-脚本：`tools/benchmark_single_image_backbones.py`。原始数据：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_single_image_bs1_v1`。
+脚本：`tools/benchmark_single_image_backbones.py`。原始数据：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/benchmarks/20261028_single_image_bs1_v1`。
 
 
 ## 单图时延的运行时归因
 
-单图eager时延并不直接反映GPU算力成本。最新诊断中，Base/B2 eager为6.70/12.63ms；保持同样计算、改用静态CUDA Graph回放后为4.54/2.25ms，输出最大差异均为0。B2在减少逐算子提交和运行时开销后反超Base。此结果不是已上线的完整策略加速，也不是TensorRT实测。详见 [原因分析](VFA/bs1_cause_analysis_20261028.md) 和 [报告目录](VFA/README.md)。
+单图eager时延并不直接反映GPU算力成本。最新诊断中，Base/B2 eager为6.70/12.63ms；保持同样计算、改用静态CUDA Graph回放后为4.54/2.25ms，输出最大差异均为0。B2在减少逐算子提交和运行时开销后反超Base。此结果不是已上线的完整策略加速，也不是TensorRT实测。详见 [原因分析](100HzS1/bs1_cause_analysis_20261028.md) 和 [报告目录](100HzS1/README.md)。
 
 
 ## 推理 CUDA Graph 默认开关（2026-10-28 后续实现）
@@ -200,4 +197,4 @@ native 是新的网络结构，不能通过删除一个权重键、设置 `stric
 旧 checkpoint 可直接使用，训练 `compute_loss` 保持 eager。`use_kv_cache` 独立且仍默认开启。
 此开关目前仅覆盖视觉主干，未捕获融合、压缩和DiT采样。
 前面的时延表保持原 eager 测量口径，不能当作新默认执行方式的数字。
-完整策略的新对照、输入/动作一致性及限制见 [推理 CUDA Graph 报告](VFA/inference_cuda_graph_20261028.md)。
+完整策略的新对照、输入/动作一致性及限制见 [推理 CUDA Graph 报告](100HzS1/inference_cuda_graph_20261028.md)。

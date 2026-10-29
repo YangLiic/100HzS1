@@ -1,4 +1,4 @@
-"""Select the first N expert-solvable scene seeds without loading a VFA checkpoint."""
+"""Select the first N expert-solvable scene seeds without loading a 100HzS1 checkpoint."""
 
 import argparse
 from datetime import datetime, timezone

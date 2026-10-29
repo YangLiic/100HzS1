@@ -1,0 +1,35 @@
+# @package _global_
+train_dataset:
+  task: null
+  demo: null
+  _target_: 100hzs1.datasets.builder.build_dataset
+  backend: lerobot
+  # Offline RoboTwin images are BGR; correct training and validation to RGB.
+  # Independent of cache switches. Override false for an already-RGB variant.
+  bgr_to_rgb: true
+  root: datasets/drrm_robotwin2.0_D435_Agilex_200_rgb
+  repo_id: D-robotics/drrm_robotwin2.0_D435_Agilex_200_rgb
+  task_list:
+    - ${train_dataset.task}
+  horizon: ${horizon}
+  obs_image_frame_indices: ${obs_image_frame_indices}
+  pad_before: ${n_obs_steps}
+  rgb_key: ${oc.select:model.obs_encoder.rgb_key,head_cam}
+  pad_after: 3
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: ${train_dataset.demo}
+  # LeRobot cache switch. false restores the original loading/decode baseline.
+  cache_to_ram: true
+  cache_backend: shm
+  cache_mode: eager
+  cache_socket: null
+  # Video-frame cache sub-switch; ignored when cache_to_ram=false.
+  cache_decoded_video: true
+  cache_build_num_workers: 8
+  cache_max_episodes: null
+  npy_feature_keys: null
+  dataset_metadata:
+    _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata
+    root: ${train_dataset.root}
+    repo_id: ${train_dataset.repo_id}

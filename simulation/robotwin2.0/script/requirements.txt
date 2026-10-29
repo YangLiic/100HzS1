@@ -1,4 +1,4 @@
-# Unified RoboTwin + VFA inference runtime. Python 3.10, NVIDIA CUDA 12.6 wheels.
+# Unified RoboTwin + 100HzS1 inference runtime. Python 3.10, NVIDIA CUDA 12.6 wheels.
 torch==2.7.1+cu126
 torchvision==0.22.1+cu126
 numpy==1.26.4

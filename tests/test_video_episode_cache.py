@@ -1,4 +1,5 @@
 """Exercise real LeRobot tables, video decode, shared ranks and worker startup."""
+from importlib import import_module as _import_module
 
 from copy import deepcopy
 import json
@@ -17,10 +18,11 @@ import pyarrow.parquet as pq
 import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from vfa.datasets.managed_episode_cache import close_managed_episode_caches
-from vfa.datasets.image_color import apply_bgr_to_rgb
-from vfa.datasets.vfa_dataset import VFADataset
-from vfa.datasets.video_frame_decoder import decode_all_video_frames_pyav, decode_video_frames_pyav_seek
+close_managed_episode_caches = _import_module('100hzs1.datasets.managed_episode_cache').close_managed_episode_caches
+apply_bgr_to_rgb = _import_module('100hzs1.datasets.image_color').apply_bgr_to_rgb
+S1Dataset = _import_module('100hzs1.datasets.dataset').S1Dataset
+decode_all_video_frames_pyav = _import_module('100hzs1.datasets.video_frame_decoder').decode_all_video_frames_pyav
+decode_video_frames_pyav_seek = _import_module('100hzs1.datasets.video_frame_decoder').decode_video_frames_pyav_seek
 
 
 def _legacy_frames(dataset, queries, episode):
@@ -36,7 +38,7 @@ def _make_dataset(root, **overrides):
                 rgb_key=["head_cam"], pad_before=2, val_ratio=0,
                 cache_to_ram=True, cache_backend="shm", cache_build_num_workers=2)
     args.update(overrides)
-    return VFADataset(**args)
+    return S1Dataset(**args)
 
 
 def _rank_reader(root, rendezvous, output, release):
@@ -106,7 +108,7 @@ class VideoEpisodeCacheTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)
-        cls.directory = tempfile.TemporaryDirectory(prefix="vfa_video_test_")
+        cls.directory = tempfile.TemporaryDirectory(prefix="s1_video_test_")
         cls.root = Path(cls.directory.name) / "dataset"
         _write_fixture(cls.root)
 
@@ -120,7 +122,7 @@ class VideoEpisodeCacheTests(unittest.TestCase):
         cached = _make_dataset(self.root)
         self.assertIsNone(baseline._episode_cache)
         with patch.object(LeRobotDataset, "_query_videos", _legacy_frames), patch(
-            "vfa.datasets.vfa_dataset.decode_video_frames_pyav_seek", side_effect=AssertionError("cache miss")
+            "100hzs1.datasets.dataset.decode_video_frames_pyav_seek", side_effect=AssertionError("cache miss")
         ):
             for idx in [0, 1, 3, 5, 6, 7, 11]:
                 expected, actual = baseline[idx], cached[idx]
@@ -136,7 +138,7 @@ class VideoEpisodeCacheTests(unittest.TestCase):
         self.assertNotIn("wrist_cam", metadata)
 
     def test_master_switch_calls_original_decoder_and_creates_no_service(self):
-        with patch("vfa.datasets.managed_episode_cache.ensure_episode_cache", side_effect=AssertionError("started cache")):
+        with patch("100hzs1.datasets.managed_episode_cache.ensure_episode_cache", side_effect=AssertionError("started cache")):
             dataset = _make_dataset(self.root, cache_to_ram=False)
         with patch.object(LeRobotDataset, "_query_videos", autospec=True, side_effect=_legacy_frames) as original:
             dataset[3]
@@ -149,7 +151,7 @@ class VideoEpisodeCacheTests(unittest.TestCase):
 
     def test_partial_cache_decodes_only_missed_episode(self):
         dataset = _make_dataset(self.root, cache_max_episodes=1)
-        with patch("vfa.datasets.vfa_dataset.decode_video_frames_pyav_seek", wraps=decode_video_frames_pyav_seek) as decode:
+        with patch("100hzs1.datasets.dataset.decode_video_frames_pyav_seek", wraps=decode_video_frames_pyav_seek) as decode:
             dataset[3]
             self.assertEqual(decode.call_count, 0)
             dataset[9]
@@ -157,7 +159,7 @@ class VideoEpisodeCacheTests(unittest.TestCase):
 
     def test_scalar_only_cache_keeps_optimized_seek(self):
         dataset = _make_dataset(self.root, cache_decoded_video=False)
-        with patch("vfa.datasets.vfa_dataset.decode_video_frames_pyav_seek", wraps=decode_video_frames_pyav_seek) as decode:
+        with patch("100hzs1.datasets.dataset.decode_video_frames_pyav_seek", wraps=decode_video_frames_pyav_seek) as decode:
             dataset[3]
             self.assertEqual(decode.call_count, 1)
         self.assertNotIn("head_cam", dataset._episode_cache_backend.metadata["columns"])
@@ -267,7 +269,7 @@ class ImageColorTests(unittest.TestCase):
 
     def test_lance_postprocessing_uses_the_same_color_correction(self):
         try:
-            from vfa.datasets.vfa_dataset_lance import VFADataset as LanceDataset
+            LanceDataset = _import_module('100hzs1.datasets.lance_dataset').S1Dataset
         except ImportError:
             self.skipTest("optional Lance dependencies are unavailable")
         from types import SimpleNamespace

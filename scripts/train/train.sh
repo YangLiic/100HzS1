@@ -7,31 +7,31 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 usage() {
     cat <<'HELP'
 Usage: scripts/train/train.sh [config.yaml] [Hydra overrides...] [--dry-run]
-Default config: configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml
-Default checkpoints: /DRoboticsAILab/users/licheng.yang/checkpoints/VFA
+Default config: configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml
+Default checkpoints: /DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1
 
 Environment:
   CONFIG_PATH         Used when no config file argument is given.
   PYTHON_BIN          Defaults to the repository .venv/bin/python.
   GPU_IDS             GPU list, e.g. 0,1; defaults to CUDA_VISIBLE_DEVICES or all.
   NUM_PROCESSES       Defaults to the selected/visible GPU count (minimum 1).
-  ACCELERATE_CONFIG   Defaults to configs/vfa_accelerate_config.yaml.
+  ACCELERATE_CONFIG   Defaults to configs/100hzs1_accelerate_config.yaml.
   MAIN_PROCESS_PORT   Defaults to 0 for automatic port selection.
   CHECKPOINT_ROOT     Optional override of the configured checkpoint root.
 
 Examples:
   NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
-    configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml \
+    configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
     train_dataset.path=/absolute/path/to/dataset_parent \
     train_dataset.task=adjust_bottle train_dataset.demo=100
-  scripts/train/train.sh configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml \
+  scripts/train/train.sh configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
     train_dataset.cache_to_ram=false --dry-run
 
-The LeRobot shared cache is managed by the VFA dataset itself.
+The LeRobot shared cache is managed by the 100HzS1 dataset itself.
 --dry-run prints the command and exits without starting training.
 HELP
 }
-CONFIG_PATH="${CONFIG_PATH:-configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml}"
 dry_run=false
 config_given=false
 hydra_overrides=()
@@ -50,6 +50,7 @@ for arg in "$@"; do
     esac
 done
 cd "$REPO_ROOT"
+export S1_ROOT="$REPO_ROOT"
 PYTHON_BIN="${PYTHON_BIN:-${REPO_ROOT}/.venv/bin/python}"
 if [[ ! -x "$PYTHON_BIN" ]]; then
     echo "Python is not executable: $PYTHON_BIN" >&2
@@ -61,7 +62,7 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 config_dir="$(cd "$(dirname "$CONFIG_PATH")" && pwd)"
 config_name="$(basename "$CONFIG_PATH")"
-ACCELERATE_CONFIG="${ACCELERATE_CONFIG:-${REPO_ROOT}/configs/vfa_accelerate_config.yaml}"
+ACCELERATE_CONFIG="${ACCELERATE_CONFIG:-${REPO_ROOT}/configs/100hzs1_accelerate_config.yaml}"
 if [[ ! -f "$ACCELERATE_CONFIG" ]]; then
     echo "Accelerate config does not exist: $ACCELERATE_CONFIG" >&2
     exit 1

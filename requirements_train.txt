@@ -1,5 +1,5 @@
 # Python 3.10, Linux x86_64, NVIDIA CUDA 12.6 wheels.
-# Minimal VFA LeRobot training + open-loop stack; simulator has its own lock.
+# Minimal 100HzS1 LeRobot training + open-loop stack; simulator has its own lock.
 torch==2.7.1+cu126
 torchvision==0.22.1+cu126
 lerobot==0.3.3

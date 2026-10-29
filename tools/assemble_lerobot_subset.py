@@ -113,7 +113,7 @@ def main():
             chunk_dir.mkdir(parents=True, exist_ok=True)
             pq.write_table(table, chunk_dir / f"episode_{new_idx:06d}.parquet")
 
-            ep_meta = src_episodes[old_idx] if str(root) == str(src0) else \
+            ep_meta = src_episodes[old_idx] if str(root) == str(src0) else\
                 json.loads([l for l in open(root / "meta/episodes.jsonl")
                             if json.loads(l)["episode_index"] == old_idx][0])
             new_episodes.append({"episode_index": new_idx,

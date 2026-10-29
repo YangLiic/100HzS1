@@ -1,0 +1,29 @@
+# @package _global_
+model:
+  obs_encoder:
+    rgb_key: ["left_cam", "right_cam", "head_cam"]
+    emvis_config:
+      processor_config:
+        load_pretrain: true
+      dim_2d: 768
+      load_backbone_pretrain: true
+      only_2d: true
+      backbone_target: 'dinov3cnn'
+      backbone_path: ${oc.env:S1_ROOT,.}/pretrained/dinov3-cnn-small
+      backbone_config: {}
+      # interpolate: 'bilinear'
+      mlp_ratio: 1.0
+      drop_p: 0.0
+      only_first_view: False
+      model_adapter_config:
+        target: ResNetAdapter
+        shape_out: [2, 2]
+        dim_out: 768
+        conv_num: 2
+      mv_fuser_config:
+        depth: 1
+        num_heads: 16   ##dinov3cnn
+        mlp_ratio: 2.0
+        drop_p: 0.0
+        use_view_embed: true
+        num_views: 3   # seed sensitivity

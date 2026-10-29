@@ -1,7 +1,7 @@
-# VFA RoboTwin 2.0
+# 100HzS1 RoboTwin 2.0
 
-VFA 自有仿真代码、评测驱动和运行环境。RoboTwin 与 VFA 推理在**同一 Python 进程、
-同一环境**中直接调用；默认四步均匀 Euler。三视角 RGB、240×320 输入、
+100HzS1 自有仿真代码、评测驱动和运行环境。RoboTwin 与 100HzS1 推理在**同一 Python 进程、
+同一环境**中直接调用；默认十步均匀 Euler。三视角 RGB、240×320 输入、
 观测帧数和动作长度从 checkpoint 恢复（当前训练配置为 1 帧状态/1 帧图像、horizon24，预测 23 帧动作）。
 Aloha 使用 cuRobo 规划、MPLib 执行动作轨迹；无需 PyTorch3D、Isaac Sim 或其他项目。
 
@@ -15,7 +15,7 @@ sudo apt-get update
 sudo apt-get install -y python3.10 python3.10-venv git git-lfs build-essential ffmpeg libgl1 libegl1 \
   libvulkan1 libglib2.0-0 libgomp1 libxrender1 libxext6 libsm6
 # 安装 uv：https://docs.astral.sh/uv/getting-started/installation/
-cd /path/to/VFA
+cd /path/to/100HzS1
 bash simulation/robotwin2.0/script/setup_env.sh
 bash simulation/robotwin2.0/script/setup_curobo.sh
 ```
@@ -67,7 +67,7 @@ cd ../..
 
 ## 4. 先用专家筛选场景种子
 
-独立入口不加载 VFA checkpoint，按 seed 递增运行专家。只有
+独立入口不加载 100HzS1 checkpoint，按 seed 递增运行专家。只有
 `plan_success` 和任务 `check_success()` 都通过才接受；
 每个候选最多3次，取最先通过的100个，不根据 Base/B2 的表现挑选。
 
@@ -104,7 +104,7 @@ Base 与 B2 都使用这同一份列表。默认评测会校验 `.expert.json` �
 本仓库 `blocks_ranking_rgb/demo_clean` 默认表已于2026-10-28实际检查：
 100个候选全部通过，保存100个 seed（100000–100099），编号与原候选表相同，
 现在附带专家验证摘要。完整逐候选记录位于
-`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/expert_seeds/blocks_ranking_rgb_demo_clean_100_20261028_v1/state.json`。
+`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/expert_seeds/blocks_ranking_rgb_demo_clean_100_20261028_v1/state.json`。
 
 ## 5. 单集验证与四卡评测
 
@@ -114,36 +114,36 @@ Base 与 B2 都使用这同一份列表。默认评测会校验 `.expert.json` �
 | 文件 | 职责 |
 |---|---|
 | `scripts/eval/eval_robotwin.sh` | 选择仿真环境、设置无窗口运行参数、启动评测 |
-| `policy/VFA/evaluate.py`（本平台目录内） | 拆分固定种子，每卡启动一个进程，严格合并结果 |
-| `script/eval_policy.py`（本平台目录内） | 单卡逐集仿真，在同一进程直接调用 VFA |
+| `policy/100hzs1/evaluate.py`（本平台目录内） | 拆分固定种子，每卡启动一个进程，严格合并结果 |
+| `script/eval_policy.py`（本平台目录内） | 单卡逐集仿真，在同一进程直接调用 100HzS1 |
 
-从 VFA 仓库根目录运行：
+从 100HzS1 仓库根目录运行：
 
 ```bash
-# 单卡单集先导；省略 --nfe 时默认4步。
+# 单卡单集先导；省略 --nfe 时从共享推理 YAML 读取，默认10步。
 bash scripts/eval/eval_robotwin.sh \
   --checkpoint /absolute/path/to/checkpoint \
-  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/my_pilot \
-  --gpus 0 --episodes 1
+  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/my_pilot \
+  --task blocks_ranking_rgb --gpus 0 --episodes 1
 
 # 四卡各25集；此例显式使用10步均匀 Euler。
 bash scripts/eval/eval_robotwin.sh \
   --checkpoint /absolute/path/to/checkpoint \
-  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/my_eval_100 \
-  --gpus 0 1 2 3 --episodes 100 --nfe 10
+  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/my_eval_100 \
+  --task blocks_ranking_rgb --gpus 0 1 2 3 --episodes 100 --nfe 10
 ```
 
 加 `--dry-run` 只打印配置、种子分组和输出目录，不启动 GPU 评测。
-默认种子文件为 `task_config/seedlists/blocks_ranking_rgb_demo_clean.txt`；
+默认种子文件按任务选择 `task_config/seedlists/<task>_<profile>.txt`，缺少时先运行专家筛选；
 同条件对比应使用相同 checkpoint 选择规则、种子列表和 NFE。
 
-默认任务 `blocks_ranking_rgb/demo_clean`，默认四步均匀推理；可用 `--task`、
+默认任务 `beat_block_hammer/demo_clean`，默认十步均匀推理；可用 `--task`、
 `--task-config`、`--seed-list`、`--nfe` 指定。Base/EfficientViT 根据
 checkpoint 的 `config.json` 恢复结构，使用同一入口。
 在线 SAPIEN 图像已经是 RGB，不翻通道；保持 JPEG roundtrip 与已有部署一致。
 每集每次推理的噪声固定为 `(seed * 1_000_003 + infer_index) % 2**31`。
 
-默认结果根目录为 `/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA`。
+默认结果根目录为 `/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1`。
 每次使用新输出目录；各卡保存日志、逐集 JSON、视频及环境来源记录。
 只有固定种子全部跑完并严格合并后才生成根目录 `result.json`、
 `_result.txt` 和 `EVALUATION_COMPLETED`。场景检查失败不会偷偷换种子。
@@ -156,14 +156,17 @@ checkpoint 的 `config.json` 恢复结构，使用同一入口。
 固定列表为 task_config/seedlists/click_alarmclock_demo_clean.txt，
 同名 .expert.json 校验任务、数量及 SHA。Base 与 B2 native 共用这份列表。
 
-训练使用 configs/vfa_train/click_alarmclock_{dinov3cnnb,efficientvit_b2_native}_3v_8gpu_L4.yaml，
+训练使用 configs/100hzs1_train/click_alarmclock_{dinov3cnnb,efficientvit_b2_native}_3v_8gpu_L4.yaml，
 单帧观测、horizon24、23 个未来绝对关节动作。评测显式传 --task click_alarmclock
 --task-config demo_clean --nfe 10 --gpus 0 1 2 3 --episodes 100，分别指定各自最终主模型。
 在线 RGB 不翻转，不能用旧 blocks_ranking_rgb 种子列表代替。
 
-无法找到专家接近姿态时，VFA 自有任务脚本标记 plan_success=False 并返回，
+无法找到专家接近姿态时，100HzS1 自有任务脚本标记 plan_success=False 并返回，
 由筛选器按专家失败处理；不修改有效场景动作或成功判据。
 
 推理默认开启视觉主干 CUDA Graph 和 K/V 缓存。评测日志记录实际 graph_captures/
 graph_replays；请求 Graph 但没有 replay 时终止，不能将回退结果冒充 Graph。
 先测 Graph；不自动追加 eager 对照，是否测试由用户决定。
+
+推理默认统一读取 configs/100hzs1_infer/default.yaml：10步、KV=true、CUDA Graph=true、bf16。
+可用 --inference-config 指定 YAML，显式命令行开关优先。CUDA Graph 只覆盖视觉主干。

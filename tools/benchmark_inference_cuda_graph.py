@@ -1,4 +1,5 @@
 """Validate existing checkpoints and time inference-only visual CUDA Graphs."""
+from importlib import import_module as _import_module
 import argparse
 from collections import defaultdict
 import inspect
@@ -9,9 +10,9 @@ import time
 import numpy as np
 import torch
 
-from benchmark_vfa_policy import compute_pids, load_inputs, load_models, measure, smi
+from benchmark_s1_policy import compute_pids, load_inputs, load_models, measure, smi
 from safetensors.torch import load_model
-from vfa.models.base_runner import load_policy
+load_policy = _import_module('100hzs1.models.base_runner').load_policy
 
 
 def compare(expected, actual):
@@ -25,8 +26,8 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--include-eager', action='store_true',
                         help='Explicitly opt in to an eager comparison; default measures Graph only')
-    parser.add_argument('--checkpoint', action='append', default=[], metavar='NAME=PATH',
-                        help='Use actual checkpoints instead of the historical structural comparison')
+    parser.add_argument('--checkpoint', action='append', required=True, metavar='NAME=PATH',
+                        help='Select an actual current-package checkpoint; repeat for comparison')
     parser.add_argument('--dataset', type=Path,
                         help='Override the offline single-task dataset root')
     parser.add_argument('--rounds', type=int, default=3)
@@ -40,26 +41,11 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
-    if args.checkpoint:
-        models, details = {}, {}
-        for value in args.checkpoint:
-            name, separator, path = value.partition('=')
-            if not separator or not name or name in models:
-                raise ValueError('Each --checkpoint must be a unique NAME=PATH')
-            path = Path(path)
-            model = load_policy(str(path), device='cpu').eval()
-            load_model(model, str(path/'model.safetensors'), strict=True, device='cpu')
-            assert (model.n_obs_steps, model.n_image_obs_steps, model.horizon, model.n_action_steps) == (1,1,24,23)
-            model.num_inference_timesteps = 10
-            models[name] = model.cuda().eval()
-            details[name] = dict(checkpoint=str(path), strict_reload=True,
-                                fusion_width=model.obs_encoder.scene_encoder.dim_2d)
-    else:
-        models, details = load_models()
+    models, details = load_models(args.checkpoint)
     if args.dataset is not None:
         # The shared input helper resolves this module constant at call time.
-        import benchmark_vfa_policy
-        benchmark_vfa_policy.DATASET = args.dataset
+        import benchmark_s1_policy
+        benchmark_s1_policy.DATASET = args.dataset
     expected_pids = compute_pids()
     assert len(expected_pids) == 1
     gpu, host, _, _, data = load_inputs(Path(__file__).resolve().parents[1], models, [1, 2])
@@ -74,7 +60,7 @@ def main():
     if args.include_eager:
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16):
             for name, model in models.items():
-                assert inspect.signature(model.predict_action).parameters['use_cuda_graph'].default is True
+                assert model.inference_options['use_cuda_graph'] is True
                 scene = model.obs_encoder.scene_encoder
                 keys = list(model.state_dict())
                 for index, obs in enumerate(observations):
@@ -121,7 +107,7 @@ def main():
         # independent output ownership. No eager prediction or timing is run.
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16):
             for name, model in models.items():
-                assert inspect.signature(model.predict_action).parameters['use_cuda_graph'].default is True
+                assert model.inference_options['use_cuda_graph'] is True
                 scene = model.obs_encoder.scene_encoder
                 keys = list(model.state_dict())
                 for index, obs in enumerate(observations):

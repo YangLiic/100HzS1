@@ -1,0 +1,53 @@
+# RoboTwin joint14 offline data is BGR despite the directory suffix _rgb.
+# Train the 100HzS1 policy/adapters with a frozen pretrained EfficientViT-B2.
+defaults:
+  - policy_config/dit_fm
+  - robot_config/robotwin2_agilex_3v
+  - dataset_config/robotwin2_singletask
+  - observation_config/efficientvit_b2_native_3v
+  - _self_
+
+train_dataset:
+  task: beat_block_hammer
+  demo: 50
+  root: /DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14/beat_block_hammer
+  repo_id: robotwin/beat_block_hammer
+  # This is already a single-task root; do not filter by a guessed task string.
+  task_list: null
+  n_obs_steps: ${n_obs_steps}
+  bgr_to_rgb: true
+  # Use the same PyAV video reader for training and validation.
+  video_backend: pyav
+  feature_key_map:
+    observation.state: state
+    observation.images.left: left_cam
+    observation.images.right: right_cam
+    observation.images.head: head_cam
+  cache_to_ram: true
+  cache_backend: shm
+  cache_decoded_video: true
+  cache_build_num_workers: 8
+  val_ratio: 0.02
+
+# Shared 8xL4 training recipe.
+num_train_epochs: 200
+train_batch_size: 128
+dataloader_num_workers: 64
+# One current state and one current image per view; no observation history.
+# horizon includes the observed state: 1 condition + 23 future actions.
+n_obs_steps: 1
+n_image_obs_steps: 1
+horizon: 24
+
+model:
+  action_key: state
+  # Condition on measured observation.state; predict the expert action column.
+  supervision_key: action
+
+# This run initializes the policy head anew; no policy checkpoint was supplied.
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b2_native_3v_obs1_h24_8gpu_L4_20261029_v1
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

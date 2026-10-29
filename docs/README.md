@@ -1,31 +1,31 @@
-# VFA 运行说明
+# 100HzS1 运行说明
 
-使用 `python -m pip install -e .` 安装，同时提供 `rtpolicy` 和 `vfa` 两个 Python 包。
-`src/rtpolicy/` 保留 RTPolicy 基线，`src/vfa/` 是独立的 VFA 开发副本；安装后使用 `import rtpolicy` 或 `import vfa`，无需在导入路径中添加 `src`。
+使用 `python -m pip install -e .` 安装，同时提供 `rtpolicy` 和 `100hzs1` 两个 Python 包。
+`src/rtpolicy/` 保留 RTPolicy 基线，`src/100hzs1/` 是独立的 100HzS1 开发副本；安装后使用 `import rtpolicy` 或 `import 100hzs1`，无需在导入路径中添加 `src`。
 移动目录或切换布局后，请在使用的 Python 环境中重新执行开发模式安装。
 本分支仅包含运行代码和配置；数据集、预训练权重、checkpoint、RobotWin2 资产需单独准备。
 
 训练性能优化的定位思路、实测结果和640配置见[性能优化笔记](performance_optimization.md)。
 
-## 基线与 VFA 入口
+## 基线与 100HzS1 入口
 
-RTPolicy 基线使用 `configs/rtpolicy_train/`；VFA 使用 `configs/vfa_train/`。
-VFA 的策略类为 `vfa.models.VFADitFlowMatching`，数据集和训练器同样从 `vfa` 包加载。
-VFA 配置将训练输出默认写入 `/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/`，
+RTPolicy 基线使用 `configs/rtpolicy_train/`；100HzS1 使用 `configs/100hzs1_train/`。
+100HzS1 的策略类为 `100hzs1.models.S1DitFlowMatching`，数据集和训练器同样从 `100hzs1` 包加载。
+100HzS1 配置将训练输出默认写入 `/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/`，
 由统一的 `checkpoint_root` 配置项控制；任务名、demo 数和训练配方继续作为子目录。
 
 先检查训练配置，再补充实际数据路径运行：
 
 ```bash
-python main.py --config-path=configs/vfa_train \
-  --config-name=dit_fm_dinov3cnnb_3v_lance_real640_bs256 --cfg job
+python main.py --config-path=configs/100hzs1_train \
+  --config-name=100hzs1_dit_fm_dinov3cnnb_3v_lance_real640_bs256 --cfg job
 ```
 
 通用训练入口为 `scripts/train/train.sh`（`train` 为正确拼写），例如：
 
 ```bash
 NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
-  configs/vfa_train/dit_fm_dinov3cnnl_1v.yaml \
+  configs/100hzs1_train/100hzs1_dit_fm_dinov3cnnl_1v.yaml \
   train_dataset.path=/absolute/path/to/dataset_parent \
   train_dataset.task=adjust_bottle train_dataset.demo=100
 ```
@@ -37,10 +37,10 @@ LeRobot episode 共享缓存由数据集自动管理，关闭时追加 `train_da
 也可显式指定 `output_dir=/absolute/run/path`。
 启动前可用 `python main.py ... --cfg job --resolve` 检查最终配置，不会开始训练。
 
-VFA ONNX 导出入口为 `python -m vfa.trainer.onnx`，对应配置位于 `configs/vfa_onnx/`。
-通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_vfa.py` 提供 VFA 的历史缓冲示例。
+100HzS1 ONNX 导出入口为 `python -m 100hzs1.trainer.onnx`，对应配置位于 `configs/100hzs1_onnx/`。
+通用 ONNX 推理脚本 `scripts/infer_onnx.py` 可供两者使用；`scripts/infer_s1.py` 提供 100HzS1 的历史缓冲示例。
 
-RoboTwin2 评测统一使用 VFA 直接推理入口，默认四卡 GPU0–3、100个固定种子，
+RoboTwin2 评测统一使用 100HzS1 直接推理入口，默认四卡 GPU0–3、100个固定种子，
 每卡25集，完成后严格合并结果。先使用 `scripts/eval/check_expert.sh` 筛选专家能成功的
 100个场景并发布默认 seed 表和验证摘要；两组模型必须共用这份列表。
 筛选命令和断点续跑见 [平台说明](../simulation/robotwin2.0/README.md#4-先用专家筛选场景种子)。
@@ -53,7 +53,7 @@ bash scripts/eval/eval_robotwin.sh \
   --gpus 0 1 2 3 --episodes 100 --nfe 10
 ```
 
-加 `--dry-run` 先检查配置与种子分组。仿真和 VFA 在同一环境、同一进程运行；
+加 `--dry-run` 先检查配置与种子分组。仿真和 100HzS1 在同一环境、同一进程运行；
 环境、资产、结果目录和先导验证见 [RoboTwin 平台说明](../simulation/robotwin2.0/README.md)。
 
 ## 数据准备
@@ -123,7 +123,7 @@ v2 数据需要先升级到 v3，本脚本对其他版本会给出明确错误�
 
 ## LeRobot episode 共享缓存
 
-`configs/vfa_train/dataset_config/` 的训练配置默认开启 `cache_to_ram: true`、
+`configs/100hzs1_train/dataset_config/` 的训练配置默认开启 `cache_to_ram: true`、
 `cache_backend: shm` 和 `cache_decoded_video: true`。只需通过
 `train_dataset.cache_to_ram=false` 即可恢复原来的数值表读取、时间戳查询和
 LeRobot 按需视频解码路径，用于基线测量。
@@ -290,90 +290,15 @@ NVDEC 会在相邻查询相隔超过 0.25 秒时重新 seek，减少随机 batch
 
 历史测速、回归脚本及原始结果已移至 [EFS实验归档](/data/efs/datasets/xianbao01.hou/rtpolicy_archives/20261016_071211/README.md)；正式训练配置和优化方法见[性能优化笔记](performance_optimization.md)。
 
-## RoboTwin joint14 单任务训练
+## 100HzS1 当前入口
 
-每个实验建立独立的顶层 YAML，组合公共 policy、robot、dataset 和 observation 配置，
-再将文件路径传给通用入口。例如在 8 张 L4 的训练节点上运行：
+安装、视觉预训练下载、训练配方及默认值见[根 README](../README.md)。
+训练配置统一位于 configs/100hzs1_train，入口 scripts/train/train.sh；
+RoboTwin joint14 配方默认单帧观测、horizon24、冻结主干，离线 BGR 转 RGB。
+EfficientViT 默认 native；共享推理 YAML 位于 configs/100hzs1_infer/default.yaml，
+默认10步均匀 Euler、K/V缓存与视觉 CUDA Graph开启、BF16。
+旧命名 checkpoint 不提供兼容转换；旧实验产物保留原目录。
 
-```bash
-cd /data/vepfs/licheng.yang/VFA
-NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 bash scripts/train/train.sh \
-  configs/vfa_train/blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4.yaml
-```
-
-该配方沿用 VODPP 的总 batch 128、64 workers、200 epochs、AdamW 1e-4；
-VFA 使用三帧状态历史、每视角最新一帧图像、horizon 8。
-`dinov3cnnl` 对应 ConvNeXt-Large（1536 维），`dinov3cnnl_3v_cnn_b` 才是 Base（1024 维）。
-视觉骨干加载预训练权重并冻结；未指定任务策略 checkpoint 时，动作头和适配层重新训练。
-若需要从已有策略继续学习，可显式设置 `+checkpoint_dir=/absolute/policy/path`；
-`resume_from_checkpoint` 用于恢复本次训练的优化器、步数等完整状态。
-
-此数据的 `observation.state` 和三路 `observation.images.{left,right,head}`
-通过 `train_dataset.feature_key_map` 映射到 `state`、`left_cam`、`right_cam`、`head_cam`。
-映射在原始缓存读取和颜色转换后生效；验证集沿用同一映射。
-`model.action_key=state` 使用测量状态作为条件，`model.supervision_key=action`
-使用数据集 `action` 列作为监督目标，两者分别从训练集数值计算归一化统计。
-`annotation.*` 是任务标注索引，不进入连续状态归一化或模型输入。
-
-离线 joint14 数据虽然目录带 `_rgb`，内容仍按 BGR 处理，`bgr_to_rgb=true`。
-正式训练的 `cache_to_ram=true、cache_decoded_video=true、cache_backend=shm`
-将原始数值和 uint8 视频帧缓存在训练节点内存，同一节点的 ranks/workers 共享。
-`cache_to_ram=true、cache_decoded_video=false` 仍使用数值缓存、时间戳缓存和优化的 PyAV 按需解码；
-`cache_to_ram=false` 才退回原始 LeRobot 读取路径。颜色转换独立于这些开关。
-
-该实验权重和日志位于
-`/DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/dinov3cnnb_3v_8gpu_L4_20261028`。
-云端 task 先执行两步 8 卡试跑（含验证和保存），通过后进入正式训练；保留配置和源码快照。
-
-## 权重与旧 checkpoint
-
-`pretrained/` 存放外部模型权重，已被 `.gitignore` 排除；Git 不记录空目录，因此新克隆的仓库通常没有此目录。
-当前视觉分支使用 **DINOv3 ConvNeXt** 预训练权重；多视角融合、视觉压缩和 Flow Matching 动作头由操作数据训练。
-这与已经训练好的任务策略 checkpoint 是两类文件。
-
-训练时设置 `model.obs_encoder.emvis_config.backbone_path` 为 DINOv3 权重目录。
-CNN-base / CNN-large / CNN-small 的配置分别使用
-`pretrained/dinov3-cnn-base`、`pretrained/dinov3-convnext-large-pretrain-lvd1689m`、
-`pretrained/dinov3-cnn-small`；以所选 YAML 的实际字段为准。
-
-相对路径以仓库根目录为工作目录，例如 Base 配置对应 `<仓库>/pretrained/dinov3-cnn-base/`。
-可以自行创建目录并放入权重，或者通过上述配置字段指定外部权重目录的绝对路径，无需复制大文件到仓库。
-目录应采用 Transformers `from_pretrained()` 格式，包含 `config.json`、`model.safetensors`（或受支持的分片权重），
-以及 `preprocessor_config.json` 等图像处理配置。Base、Large、Small 的权重必须与所选视觉配置匹配。
-模型来源见 [DINOv3 官方仓库](https://github.com/facebookresearch/dinov3)。
-
-VFA 的读取路径会在内存中将 RTPolicy / 旧 VODPPlus 的已知类引用映射到 `vfa`，不修改原 checkpoint。
-若要永久更新一份复制出来的 checkpoint 元数据，先检查：
-
-```bash
-python tools/rename_vfa_ckpt_pkg_map.py /path/to/copied/checkpoint --dry-run
-```
-
-确认后去掉 `--dry-run`。默认只更新配置元数据，不重写权重；当前 VFA 副本与基线结构一致，后续结构改动需另行检查权重兼容性。
-
-旧 VODPPlus checkpoint 若仍使用旧策略类名，可运行：
-
-```bash
-python tools/rename_ckpt_pkg_map.py --root /path/to/checkpoints
-```
-
-该工具修改 `config.json` 中的类名映射，保留权重文件。
-
-## RobotWin2 外部资产
-
-仿真运行目录为 `simulation/robotwin2.0`。资产下载入口：
-
-```bash
-cd simulation/robotwin2.0
-bash script/_download_assets.sh
-```
-
-已有资产时，可将 `objects`、`background_texture` 和 `embodiments` 放入此目录的
-`assets/` 下，然后运行 `python script/update_embodiment_config_path.py` 更新 cuRobo 路径。
-URDF、网格、纹理及下载压缩包均由 Git 忽略。
-
-## 输出
-
-训练输出由 `output_dir` 指定。新实验使用独立目录，避免覆盖已有模型。
-仿真视频及结果写入 `simulation/robotwin2.0/eval_result/`；ONNX/TensorRT 产物可写入
-`outputs/`。这些目录、W&B 日志及 Python 缓存均不会提交。
+[开环入口](../scripts/openloop_eval/README.md)直接加载模型；
+[自有 RoboTwin 平台](../simulation/robotwin2.0/README.md)在仿真环境同进程推理。
+新训练与评测输出分别位于 checkpoints/100HzS1 与 robotwin2.0/100HzS1。

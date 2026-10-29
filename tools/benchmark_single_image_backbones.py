@@ -1,4 +1,5 @@
-"""True image-batch=1 L4 timing, bare spatial trunks and VFA encoder APIs."""
+"""True image-batch=1 L4 timing, bare spatial trunks and 100HzS1 encoder APIs."""
+from importlib import import_module as _import_module
 import argparse
 from contextlib import nullcontext
 import hashlib
@@ -15,8 +16,8 @@ import timm
 import transformers
 from transformers import AutoConfig
 
-from vfa.models.policy.vfa.emvis.encoder.dinov3cnn_encoder import DINOv3Encoder
-from vfa.models.policy.vfa.emvis.encoder.efficientvit_encoder import EfficientViTEncoder
+DINOv3Encoder = _import_module('100hzs1.models.policy.flow_matching.emvis.encoder.dinov3cnn_encoder').DINOv3Encoder
+EfficientViTEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.encoder.efficientvit_encoder').EfficientViTEncoder
 
 
 def pids():
@@ -47,7 +48,7 @@ def main():
     torch.backends.cudnn.allow_tf32=False
     torch.backends.cudnn.benchmark=False
     torch.manual_seed(42)
-    dino_path='/data/vepfs/licheng.yang/VFA/pretrained/dinov3-cnn-base'
+    dino_path='/data/vepfs/licheng.yang/100HzS1/pretrained/dinov3-cnn-base'
     b2_path='/DRoboticsAILab/users/licheng.yang/pretrained/efficientvit/efficientvit_b2.r256_in1k'
     dino=DINOv3Encoder(AutoConfig.from_pretrained(dino_path,local_files_only=True))
     dino.load_pretrained_model(dino_path,freeze=True)
@@ -71,8 +72,8 @@ def main():
     methods={
         ('dinov3_base','spatial_trunk'):dino_spatial,
         ('efficientvit_b2','spatial_trunk'):b2.model.forward_features,
-        ('dinov3_base','vfa_encoder_api'):lambda x:dino(x.unsqueeze(1))['image_tokens'],
-        ('efficientvit_b2','vfa_encoder_api'):lambda x:b2(x.unsqueeze(1))['image_tokens'],
+        ('dinov3_base','s1_encoder_api'):lambda x:dino(x.unsqueeze(1))['image_tokens'],
+        ('efficientvit_b2','s1_encoder_api'):lambda x:b2(x.unsqueeze(1))['image_tokens'],
     }
     metadata=dict(device=gpu_state(),torch=torch.__version__,cuda=torch.version.cuda,
                   timm=timm.__version__,transformers=transformers.__version__,image_batch=1,
@@ -82,8 +83,8 @@ def main():
                   parameters=dict(dinov3_base=sum(p.numel() for p in dino.parameters()),
                                   efficientvit_b2=sum(p.numel() for p in b2.parameters())),
                   definitions=dict(spatial_trunk='DINO stages only / EfficientViT forward_features: raw stride32 feature maps',
-                                   vfa_encoder_api='actual one-view VFA encoder, including DINO final normalization and token/position packaging'),
-                  exclusions=['resize','normalization','H2D','classification head','VFA projection','view-aware fusion','visual compression','DiT'],
+                                   s1_encoder_api='actual one-view 100HzS1 encoder, including DINO final normalization and token/position packaging'),
+                  exclusions=['resize','normalization','H2D','classification head','100HzS1 projection','view-aware fusion','visual compression','DiT'],
                   source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
     (args.output/'environment.json').write_text(json.dumps(metadata,indent=2))
     records=[];checks=[]
@@ -92,7 +93,7 @@ def main():
             cases=[]
             for (height,width),x in inputs.items():
                 assert tuple(x.shape)==(1,3,height,width)
-                for scope in ('spatial_trunk','vfa_encoder_api'):
+                for scope in ('spatial_trunk','s1_encoder_api'):
                     for name in ('dinov3_base','efficientvit_b2'):
                         function=methods[name,scope]
                         output=function(x)

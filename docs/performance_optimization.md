@@ -81,7 +81,7 @@ Video编译组取批次最大等待 1.751 秒，说明编译后输入等待长�
 conda activate RTPolicy
 torchrun --standalone --nproc_per_node=8 main.py \
   --config-path=configs/rtpolicy_train \
-  --config-name=dit_fm_dinov3cnnb_3v_lance_real640_bs256 \
+  --config-name=100hzs1_dit_fm_dinov3cnnb_3v_lance_real640_bs256 \
   train_dataset.root=/efs/path/to/lance_jpeg_blob \
   train_dataset.task=drag_the_drawer_0901_renamed train_dataset.demo=224
 ```

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT.parents[1] / "src"), str(ROOT), str(ROOT / "policy")]
+sys.path[:0] = [str(ROOT.parents[1] / "src"), str(ROOT)]
 
 
 def main():
@@ -23,8 +23,9 @@ def main():
         "mplib",
         "open3d",
         "cv2",
-        "VFA",
-        "envs.blocks_ranking_rgb",
+        "100hzs1",
+        "policy.100hzs1",
+        "envs.beat_block_hammer",
         "curobo.wrap.reacher.motion_gen",
     ]:
         importlib.import_module(name)

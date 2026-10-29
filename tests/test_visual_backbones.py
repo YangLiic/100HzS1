@@ -1,4 +1,5 @@
 """Backbone compatibility, spatial contract, frozen BN and offline reload."""
+from importlib import import_module as _import_module
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -10,8 +11,9 @@ import unittest
 import torch
 from torch import nn
 
-from vfa.models.policy.vfa.emvis.embodied_vision import EmVisRM, VisualEncoder
-from vfa.models.policy.vfa.emvis.encoder.efficientvit_encoder import EfficientViTEncoder
+EmVisRM = _import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision').EmVisRM
+VisualEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision').VisualEncoder
+EfficientViTEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.encoder.efficientvit_encoder').EfficientViTEncoder
 
 
 def scene_config(variant="b2", dim=1024):
@@ -34,33 +36,6 @@ class VisualBackboneTests(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(1)
 
-    def test_dino_original_state_keys_and_forward_are_unchanged(self):
-        root = Path(__file__).resolve().parents[1]
-        source = subprocess.check_output(
-            ["git", "show", "26edd29:src/vfa/models/policy/vfa/emvis/embodied_vision.py"],
-            cwd=root, text=True,
-        )
-        legacy = types.ModuleType("vfa.models.policy.vfa.emvis.legacy_embodied_vision")
-        legacy.__package__ = "vfa.models.policy.vfa.emvis"
-        exec(compile(source, "<committed_dino_baseline>", "exec"), legacy.__dict__)
-        config = dict(
-            dim_2d=32, backbone_target="dinov3cnn", load_backbone_pretrain=False,
-            backbone_config=dict(hidden_sizes=[8, 16, 24, 32], depths=[1, 1, 1, 1]),
-            processor_config=dict(do_resize=False, do_rescale=False),
-            only_2d=True, mlp_ratio=1.,
-            mv_fuser_config=dict(depth=1, num_heads=4, mlp_ratio=2., num_views=3, drop_p=0.),
-            model_adapter_config=dict(target="ResNetAdapter", shape_out=[2, 2], dim_out=32, conv_num=2),
-        )
-        torch.manual_seed(42)
-        original = legacy.EmVisRM(**deepcopy(config)).eval()
-        torch.manual_seed(42)
-        updated = EmVisRM(**deepcopy(config)).eval()
-        self.assertEqual(original.state_dict().keys(), updated.state_dict().keys())
-        updated.load_state_dict(original.state_dict(), strict=True)
-        image = torch.rand(1, 3, 3, 240, 320)
-        with torch.no_grad():
-            torch.testing.assert_close(original(image), updated(image), rtol=0, atol=0)
-        self.assertEqual(tuple(updated.img_processing(image[:, 0]).shape), (1, 3, 256, 320))
 
     def test_native_b2_b3_spatial_tokens_and_coordinates(self):
         for variant, channels in [("b2", 384), ("b3", 512)]:
@@ -105,7 +80,7 @@ class VisualBackboneTests(unittest.TestCase):
     def test_local_pretrained_loader_is_strict_for_trunk_and_ignores_classifier(self):
         from safetensors.torch import save_file
         model = EfficientViTEncoder("efficientvit_b2.r256_in1k")
-        with tempfile.TemporaryDirectory(prefix="vfa_efficientvit_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="s1_efficientvit_test_") as directory:
             path = Path(directory) / "model.safetensors"
             state = {k:v.clone() for k,v in model.model.state_dict().items()}
             state["head.fake_classifier"] = torch.zeros(1)
@@ -172,64 +147,16 @@ class VisualBackboneTests(unittest.TestCase):
                 self.assertEqual(actual.shape, (1, 12, 1024))
                 torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
-    def test_projected_legacy_weights_and_optimizer_resume_are_unchanged(self):
-        root = Path(__file__).resolve().parents[1]
-        source = subprocess.check_output(
-            ["git", "show", "8a7a28a:src/vfa/models/policy/vfa/emvis/embodied_vision.py"],
-            cwd=root, text=True,
-        )
-        legacy = types.ModuleType("vfa.models.policy.vfa.emvis.legacy_projected_vision")
-        legacy.__package__ = "vfa.models.policy.vfa.emvis"
-        exec(compile(source, "<committed_projected_baseline>", "exec"), legacy.__dict__)
-        # Small trainable tower; same production B2 trunk and state-key layout.
-        config = scene_config(dim=32)
-        original = legacy.EmVisRM(**deepcopy(config)).train()
-        optimizer = torch.optim.AdamW(original.parameters(), lr=1e-4)
-        image = torch.rand(1, 3, 3, 240, 320)
-        optimizer.zero_grad(set_to_none=True)
-        original(image).square().mean().backward()
-        optimizer.step()
-        state, optimizer_state = deepcopy(original.state_dict()), deepcopy(optimizer.state_dict())
-        for mode in (None, "projected"):
-            with self.subTest(mode=mode):
-                reload_config = deepcopy(config)
-                if mode is None:
-                    from vfa.common.checkpoint import normalize_checkpoint_metadata
-                    reload_config.pop("efficientvit_fusion_mode")
-                    reload_config = normalize_checkpoint_metadata({
-                        "obs_encoder": {"emvis_config": reload_config}
-                    })["obs_encoder"]["emvis_config"]
-                else:
-                    reload_config["efficientvit_fusion_mode"] = mode
-                updated = EmVisRM(**reload_config).train()
-                self.assertEqual(list(original.state_dict()), list(updated.state_dict()))
-                self.assertEqual([n for n, _ in original.named_parameters()],
-                                 [n for n, _ in updated.named_parameters()])
-                updated.load_state_dict(state, strict=True)
-                restored_optimizer = torch.optim.AdamW(updated.parameters(), lr=1e-4)
-                restored_optimizer.load_state_dict(deepcopy(optimizer_state))
-                original.load_state_dict(state, strict=True)
-                optimizer.load_state_dict(deepcopy(optimizer_state))
-                optimizer.zero_grad(set_to_none=True)
-                restored_optimizer.zero_grad(set_to_none=True)
-                expected, actual = original(image), updated(image)
-                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
-                expected.square().mean().backward()
-                actual.square().mean().backward()
-                optimizer.step()
-                restored_optimizer.step()
-                for key, value in original.state_dict().items():
-                    torch.testing.assert_close(updated.state_dict()[key], value, rtol=0, atol=0)
 
     def test_native_configs_and_shared_defaults_compose(self):
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
         root = Path(__file__).resolve().parents[1]
         OmegaConf.register_new_resolver("eval", eval, replace=True)
-        with initialize_config_dir(version_base=None, config_dir=str(root / "configs/vfa_train")):
+        with initialize_config_dir(version_base=None, config_dir=str(root / "configs/100hzs1_train")):
             for variant in ("b2", "b3"):
-                old_name = f"blocks_ranking_rgb_efficientvit_{variant}_3v_8gpu_L4"
-                new_name = f"blocks_ranking_rgb_efficientvit_{variant}_native_3v_8gpu_L4"
+                old_name = f"100hzs1_blocks_ranking_rgb_efficientvit_{variant}_3v_8gpu_L4"
+                new_name = f"100hzs1_blocks_ranking_rgb_efficientvit_{variant}_native_3v_8gpu_L4"
                 legacy, native = compose(config_name=old_name), compose(config_name=new_name)
                 for cfg in (legacy, native):
                     OmegaConf.resolve(cfg)

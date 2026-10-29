@@ -1,0 +1,38 @@
+# @package _global_
+train_dataset:
+  task: null
+  demo: null
+  path: null
+  _target_: 100hzs1.datasets.builder.build_dataset
+  backend: lerobot
+  # Source color correction is independent of the performance/cache switches.
+  # Set true for robotwin2.0_lerobot_clean_joint14, including uncached baselines.
+  bgr_to_rgb: false
+  root: ${train_dataset.path}/${train_dataset.task}
+  repo_id: D-robotics/${train_dataset.task}
+  horizon: ${horizon}
+  n_obs_steps: ${n_obs_steps}
+  obs_image_frame_indices: ${obs_image_frame_indices}
+  pad_before: ${n_obs_steps}
+  rgb_key: ${oc.select:model.obs_encoder.rgb_key,head_cam}
+  pad_after: 3
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: ${train_dataset.demo}
+  # Auto-mask state dimensions below a >=100x adjacent range gap.
+  # Set null or <=0 to preserve the legacy all-dim behavior explicitly.
+  static_joint_ratio_threshold: 100.0
+  # LeRobot cache switch. false restores the original loading/decode baseline.
+  cache_to_ram: true
+  cache_mode: eager
+  cache_backend: shm
+  cache_socket: null
+  # Video-frame cache sub-switch; ignored when cache_to_ram=false.
+  cache_decoded_video: true
+  cache_build_num_workers: 8
+  cache_max_episodes: null
+  npy_feature_keys: null
+  dataset_metadata:
+    _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata
+    root: ${train_dataset.root}
+    repo_id: ${train_dataset.repo_id}

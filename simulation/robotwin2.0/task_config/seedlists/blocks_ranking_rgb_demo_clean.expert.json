@@ -17,14 +17,14 @@
     "attempts": 3
   },
   "runtime": {
-    "python": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/.venv/bin/python",
-    "environment": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/.venv",
+    "python": "/data/vepfs/licheng.yang/100HzS1/simulation/robotwin2.0/.venv/bin/python",
+    "environment": "/data/vepfs/licheng.yang/100HzS1/simulation/robotwin2.0/.venv",
     "torch": "2.7.1+cu126",
     "sapien": "3.0.0b1",
     "gpu": "NVIDIA L4",
     "curobo_commit": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
-    "envs": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/envs/__init__.py",
-    "curobo": "/data/vepfs/licheng.yang/VFA/simulation/robotwin2.0/envs/curobo/src/curobo/__init__.py"
+    "envs": "/data/vepfs/licheng.yang/100HzS1/simulation/robotwin2.0/envs/__init__.py",
+    "curobo": "/data/vepfs/licheng.yang/100HzS1/simulation/robotwin2.0/envs/curobo/src/curobo/__init__.py"
   },
   "source_sha256": {
     "script/check_expert.py": "e0943461732f9c1fb284c936ef0522a37136a6c09e368e4b085d3baf82453f45",

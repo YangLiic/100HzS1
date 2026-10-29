@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 path = Path(__file__).parents[1] / "simulation/robotwin2.0/script/expert_check.py"
-spec = importlib.util.spec_from_file_location("vfa_expert_check", path)
+spec = importlib.util.spec_from_file_location("s1_expert_check", path)
 expert = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(expert)
 

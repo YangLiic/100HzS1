@@ -1,0 +1,5 @@
+# Shared inference defaults. Explicit CLI/call arguments take precedence.
+num_inference_timesteps: 10
+use_kv_cache: true
+use_cuda_graph: true
+precision: bf16

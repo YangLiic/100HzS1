@@ -1,4 +1,5 @@
-"""Matched-shape L4 latency: native trunk, aligned tokens and full VFA tower."""
+"""Matched-shape L4 latency: native trunk, aligned tokens and full 100HzS1 tower."""
+from importlib import import_module as _import_module
 import argparse
 from contextlib import nullcontext
 import csv
@@ -17,12 +18,12 @@ import torch
 import timm
 import transformers
 
-from vfa.models.policy.vfa.emvis.embodied_vision import VisualEncoder
+VisualEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision').VisualEncoder
 
 CONFIGS = {
-    "dinov3_convnext_base": "blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4",
-    "efficientvit_b2": "blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4",
-    "efficientvit_b3": "blocks_ranking_rgb_efficientvit_b3_3v_8gpu_L4",
+    "dinov3_convnext_base": "100hzs1_blocks_ranking_rgb_dinov3cnnb_3v_8gpu_L4",
+    "efficientvit_b2": "100hzs1_blocks_ranking_rgb_efficientvit_b2_3v_8gpu_L4",
+    "efficientvit_b3": "100hzs1_blocks_ranking_rgb_efficientvit_b3_3v_8gpu_L4",
 }
 
 
@@ -86,7 +87,7 @@ def main():
     records = []
     reference_pixels = {}
     for name in args.models:
-        with initialize_config_dir(version_base=None, config_dir=str(root / "configs/vfa_train")):
+        with initialize_config_dir(version_base=None, config_dir=str(root / "configs/100hzs1_train")):
             config = compose(config_name=CONFIGS[name])
         OmegaConf.resolve(config)
         vision_config = OmegaConf.to_container(config.model.obs_encoder, resolve=True)

@@ -3,9 +3,9 @@ requires = ["setuptools>=70.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vfa"
+name = "100hzs1"
 version = "0.1"
-description = "VFA visuomotor policy development."
+description = "100HzS1 visuomotor policy development."
 requires-python = ">=3.10"
 license = { "text" = "AGPL-3.0" }
 keywords = ["vla", "va", "ML", "DL", "AI"]
@@ -56,9 +56,8 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["rtpolicy", "rtpolicy.*", "vfa", "vfa.*"]
+include = ["rtpolicy", "rtpolicy.*", "100hzs1", "100hzs1.*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-rtpolicy = ["**/*.yaml"]
-vfa = ["**/*.yaml"]
+"*" = ["**/*.yaml"]

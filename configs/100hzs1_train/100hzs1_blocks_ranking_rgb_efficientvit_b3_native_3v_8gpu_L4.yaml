@@ -1,0 +1,7 @@
+# Native-width experiment. Use a separate output directory from projected runs.
+defaults:
+  - 100hzs1_blocks_ranking_rgb_efficientvit_b3_3v_8gpu_L4
+  - observation_config/efficientvit_b3_native_3v
+  - _self_
+
+output_dir: ${checkpoint_root}/blocks_ranking_rgb/efficientvit_b3_native_3v_obs1_h24_8gpu_L4_20261028

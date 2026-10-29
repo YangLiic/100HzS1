@@ -265,7 +265,7 @@ def derive_config(
 
     # Robot type & source fps (with backfill paths for legacy data.json)
     robot_type = robot_type_override or info.get('robot_type') or 'unknown'
-    source_fps = source_fps_override or info.get('fps') \
+    source_fps = source_fps_override or info.get('fps')\
         or info.get('image', {}).get('fps') or 10
     if 'robot_type' not in info and not robot_type_override:
         print(f"[warn] data.json missing 'info.robot_type'; using "

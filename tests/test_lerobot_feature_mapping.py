@@ -1,4 +1,5 @@
 """Check raw LeRobot naming, independent state/action targets and cache parity."""
+from importlib import import_module as _import_module
 import json
 from pathlib import Path
 import tempfile
@@ -11,14 +12,14 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from test_video_episode_cache import _write_fixture, _make_dataset, _legacy_frames
-from vfa.datasets.managed_episode_cache import close_managed_episode_caches
+close_managed_episode_caches = _import_module('100hzs1.datasets.managed_episode_cache').close_managed_episode_caches
 
 
 class LeRobotFeatureMappingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         torch.set_num_threads(1)
-        cls.directory = tempfile.TemporaryDirectory(prefix="vfa_mapping_test_")
+        cls.directory = tempfile.TemporaryDirectory(prefix="s1_mapping_test_")
         cls.root = Path(cls.directory.name)
         _write_fixture(cls.root)
         raw_names = {"state": "observation.state", "head_cam": "observation.images.head",

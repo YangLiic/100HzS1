@@ -12,7 +12,7 @@ export PATH="$CUDA_HOME/bin:$PATH"
 export MAX_JOBS="${MAX_JOBS:-4}"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.9}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.cache/uv}"
-export TMPDIR="${VFA_SETUP_TMPDIR:-$ROOT/.cache/tmp}"
+export TMPDIR="${S1_SETUP_TMPDIR:-$ROOT/.cache/tmp}"
 mkdir -p "$TMPDIR"
 if [ ! -d "$SOURCE/.git" ]; then
   [ ! -e "$SOURCE" ] || { echo "Refusing to replace $SOURCE"; exit 1; }

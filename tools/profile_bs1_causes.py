@@ -1,6 +1,8 @@
 """Explain L4 image-bs1 latency using operator traces and controlled diagnostics."""
+from importlib import import_module as _import_module
 from collections import Counter
 from copy import deepcopy
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -9,10 +11,10 @@ import time
 import numpy as np
 import torch
 from transformers import AutoConfig
-from vfa.models.policy.vfa.emvis.encoder.dinov3cnn_encoder import DINOv3Encoder
-from vfa.models.policy.vfa.emvis.encoder.efficientvit_encoder import EfficientViTEncoder
+DINOv3Encoder = _import_module('100hzs1.models.policy.flow_matching.emvis.encoder.dinov3cnn_encoder').DINOv3Encoder
+EfficientViTEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.encoder.efficientvit_encoder').EfficientViTEncoder
 
-OUT=Path('/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_bs1_cause_profile_v1')
+OUT=Path('/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/benchmarks/20261028_bs1_cause_profile_v1')
 
 
 def pids():
@@ -54,16 +56,25 @@ def profile(function,name):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--include-eager', action='store_true',
+                        help='Required opt-in: this diagnostic profiles eager operators')
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    if not args.include_eager:
+        parser.error('This diagnostic requires an explicit --include-eager decision')
+    global OUT
+    OUT = args.output
     assert not OUT.exists();OUT.mkdir(parents=True)
     assert not pids(),'GPU occupied; no diagnostics launched'
     torch.set_num_threads(1);torch.manual_seed(42)
     torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
     torch.backends.cudnn.benchmark=False
-    path='/data/vepfs/licheng.yang/VFA/pretrained/dinov3-cnn-base'
+    path=str(Path(__file__).resolve().parents[1]/'pretrained/dinov3-cnn-base')
     dino=DINOv3Encoder(AutoConfig.from_pretrained(path,local_files_only=True))
     dino.load_pretrained_model(path,freeze=True);dino.cuda().eval()
     b2=EfficientViTEncoder('efficientvit_b2.r256_in1k',frozen=True)
-    b2.load_pretrained_model('/DRoboticsAILab/users/licheng.yang/pretrained/efficientvit/efficientvit_b2.r256_in1k')
+    b2.load_pretrained_model(str(Path(__file__).resolve().parents[1]/'pretrained/efficientvit_b2.r256_in1k'))
     b2.cuda().eval()
     expected=pids();assert len(expected)==1
     x=torch.rand(1,3,256,320,device='cuda')

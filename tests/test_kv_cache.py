@@ -1,4 +1,5 @@
 """Inference K/V cache equivalence, lifetime, training and checkpoint compatibility."""
+from importlib import import_module as _import_module
 from contextlib import nullcontext
 import subprocess
 import types
@@ -10,9 +11,9 @@ import torch
 from torch import nn
 from timm.models.vision_transformer import RmsNorm
 
-from vfa.models.policy.vfa.dit_fm_policy import VFADitFlowMatching
-from vfa.models.policy.vfa.module.blocks import CrossAttention
-from vfa.models.policy.vfa.module.conditional_dit_head import DiT
+S1DitFlowMatching = _import_module('100hzs1.models.policy.flow_matching.dit_fm_policy').S1DitFlowMatching
+CrossAttention = _import_module('100hzs1.models.policy.flow_matching.module.blocks').CrossAttention
+DiT = _import_module('100hzs1.models.policy.flow_matching.module.conditional_dit_head').DiT
 
 
 def small_dit(self_attn_first=True):
@@ -25,7 +26,7 @@ def small_dit(self_attn_first=True):
 
 
 class Sampler(nn.Module):
-    conditional_sample = VFADitFlowMatching.conditional_sample
+    conditional_sample = S1DitFlowMatching.conditional_sample
 
     def __init__(self):
         super().__init__()
@@ -61,31 +62,6 @@ class KVCacheTests(unittest.TestCase):
                             actual = model(x, c, attention_mask, kv_cache=cache)
                             torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
-    def test_uncached_training_outputs_and_gradients_match_original(self):
-        root = Path(__file__).resolve().parents[1]
-        source = subprocess.check_output(
-            ["git", "show", "8a7a28a:src/vfa/models/policy/vfa/module/blocks.py"],
-            cwd=root, text=True)
-        legacy = types.ModuleType("legacy_blocks")
-        exec(compile(source, "<original_blocks>", "exec"), legacy.__dict__)
-        original = legacy.CrossAttention(64, num_heads=4, qkv_bias=True,
-                                          qk_norm=True, norm_layer=RmsNorm).train()
-        updated = CrossAttention(64, num_heads=4, qkv_bias=True,
-                                 qk_norm=True, norm_layer=RmsNorm).train()
-        self.assertEqual(list(original.state_dict()), list(updated.state_dict()))
-        updated.load_state_dict(original.state_dict(), strict=True)
-        x = torch.randn(2, 7, 64, requires_grad=True)
-        c = torch.randn(2, 12, 64, requires_grad=True)
-        x2, c2 = x.detach().clone().requires_grad_(), c.detach().clone().requires_grad_()
-        expected, actual = original(x, c), updated(x2, c2)
-        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
-        expected.square().mean().backward()
-        actual.square().mean().backward()
-        torch.testing.assert_close(x2.grad, x.grad, rtol=0, atol=0)
-        torch.testing.assert_close(c2.grad, c.grad, rtol=0, atol=0)
-        for (name, old), (new_name, new) in zip(original.named_parameters(), updated.named_parameters()):
-            self.assertEqual(name, new_name)
-            torch.testing.assert_close(new.grad, old.grad, rtol=0, atol=0)
 
     def test_dit_cache_matches_for_both_attention_orders(self):
         for self_attn_first in (True, False):

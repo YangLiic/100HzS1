@@ -1,0 +1,33 @@
+# Native 640x480, three cameras, 16-D real-robot state/action.
+defaults:
+  - policy_config/dit_fm
+  - robot_config/real_stack_cover_3v
+  - dataset_config/demo_separated_dataset
+  - observation_config/dinov3cnnl_3v_cnn_b
+  - _self_
+
+horizon: 30
+n_obs_steps: 1
+train_batch_size: 256
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+optimizer:
+  lr: 2e-4
+
+dataloader_num_workers: 64
+dataloader_prefetch_factor: 2
+dataloader_non_blocking: true
+dataloader_cuda_prefetch: true
+vision_backbone_compile: true
+
+train_dataset:
+  backend: lance
+  dataset_metadata: null
+  root: null  # Set the converted Lance JPEG blob directory on the command line.
+  pad_after: 28
+  decode_device: cpu
+  image_io_backend: mmap
+  image_cache_size_bytes: 0
+  video_cache_size_bytes: 0
+
+output_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/100hzs1_dit_fm_dinov3cnnb_3v_lance_real640_bs256

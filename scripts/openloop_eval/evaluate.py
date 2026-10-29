@@ -1,4 +1,5 @@
-"""Direct VFA open-loop inference on joint14 LeRobot videos (no simulator/server)."""
+"""Direct 100HzS1 open-loop inference on joint14 LeRobot videos (no simulator/server)."""
+from importlib import import_module as _import_module
 
 import argparse
 import contextlib
@@ -12,7 +13,9 @@ import pyarrow.parquet as pq
 import torch
 from safetensors.torch import load_model
 
-from vfa.models.base_runner import load_policy
+load_policy = _import_module('100hzs1.models.base_runner').load_policy
+load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+configure_policy_inference = _import_module("100hzs1.common.inference").configure_policy_inference
 
 CAMERAS = {
     "left_cam": "observation.images.left",
@@ -115,7 +118,7 @@ def build_observation(
     return obs
 
 
-def predict(model, obs, seed, precision, use_cuda_graph=True):
+def predict(model, obs, seed, precision, use_cuda_graph=None, use_kv_cache=None):
     torch.manual_seed(seed)
     cast = (
         torch.autocast("cuda", dtype=torch.bfloat16)
@@ -126,7 +129,7 @@ def predict(model, obs, seed, precision, use_cuda_graph=True):
     hook = model.model.register_forward_hook(lambda *_: calls.append(1))
     try:
         with torch.inference_mode(), cast:
-            action = model.predict_action(obs, use_cuda_graph=use_cuda_graph)["action"][0].float().cpu().numpy()
+            action = model.predict_action(obs, use_cuda_graph=use_cuda_graph, use_kv_cache=use_kv_cache)["action"][0].float().cpu().numpy()
     finally:
         hook.remove()
     if use_cuda_graph and next(iter(obs.values())).is_cuda:
@@ -223,6 +226,14 @@ def use_fp32(model):
 
 
 def run(args):
+    options = load_inference_options(args.inference_config, {
+        "num_inference_timesteps": args.nfe, "precision": args.precision,
+        "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
+    })
+    args.nfe = options["num_inference_timesteps"]
+    args.precision = options["precision"]
+    args.cuda_graph = options["use_cuda_graph"]
+    args.kv_cache = options["use_kv_cache"]
     root = args.dataset
     if not (root / "meta/info.json").is_file():
         root = root / args.task
@@ -233,7 +244,8 @@ def run(args):
         raise FileExistsError(f"Use a fresh output directory: {args.output}")
     args.output.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(4)
-    model = load_policy(str(args.checkpoint), device="cpu").eval()
+    model = load_policy(str(args.checkpoint), device="cpu", inference_config=args.inference_config).eval()
+    configure_policy_inference(model, args.inference_config, options)
     load_model(model, str(args.checkpoint / "model.safetensors"), strict=True)
     model.to(args.device)
     if args.precision == "fp32":
@@ -264,7 +276,9 @@ def run(args):
         "dataset": str(root),
         "nfe": args.nfe,
         "precision": args.precision,
-        "use_cuda_graph": not args.no_cuda_graph,
+        "use_cuda_graph": args.cuda_graph,
+        "use_kv_cache": args.kv_cache,
+        "inference_config": str(args.inference_config) if args.inference_config else "packaged defaults",
         "cuda_graph_scope": "visual backbone",
         "source_color": args.source_color,
         "n_obs_steps": n_obs,
@@ -302,7 +316,7 @@ def run(args):
                 2**31
             )
             predictions.append(predict(model, obs, noise_seed, args.precision,
-                                       use_cuda_graph=not args.no_cuda_graph))
+                                       use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache))
             if index % 25 == 0:
                 print(
                     f"episode={episode} chunks={index + 1}/{len(anchors)}", flush=True
@@ -428,7 +442,7 @@ def run(args):
                 seed = (args.seed + episode * 1_000_003 + int(anchor)) % (2**31)
                 value = predict(
                     model, obs, seed, "fp32" if variant == "fp32" else args.precision,
-                    use_cuda_graph=not args.no_cuda_graph,
+                    use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache,
                 )
                 values.append(value)
                 targets.append(target)
@@ -461,7 +475,7 @@ def parser():
             "/DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14"
         ),
     )
-    p.add_argument("--task", default="blocks_ranking_rgb")
+    p.add_argument("--task", default="beat_block_hammer")
     p.add_argument("--episodes", type=int, nargs="+", default=[0, 4])
     p.add_argument(
         "--anchors",
@@ -472,10 +486,11 @@ def parser():
     p.add_argument("--stride", type=int, help="Default action chunk length")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--source-color", choices=["bgr", "rgb"], default="bgr")
-    p.add_argument("--precision", choices=["bf16", "fp32"], default="bf16")
-    p.add_argument("--no-cuda-graph", action="store_true",
-                   help="Disable default inference-only visual CUDA Graph replay")
-    p.add_argument("--nfe", type=int, default=10)
+    p.add_argument("--precision", choices=["bf16", "fp32"], default=None)
+    p.add_argument("--inference-config", type=Path)
+    p.add_argument("--cuda-graph", action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--nfe", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda:0")
     p.add_argument(
@@ -488,6 +503,6 @@ def parser():
 
 if __name__ == "__main__":
     arguments = parser().parse_args()
-    if arguments.nfe < 1 or (arguments.stride is not None and arguments.stride < 1):
+    if (arguments.nfe is not None and arguments.nfe < 1) or (arguments.stride is not None and arguments.stride < 1):
         raise ValueError("nfe and stride must be positive")
     run(arguments)

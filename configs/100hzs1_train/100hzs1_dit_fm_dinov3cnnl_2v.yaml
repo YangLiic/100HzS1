@@ -1,0 +1,9 @@
+defaults:
+  - policy_config/dit_fm
+  - robot_config/robotwin2_agilex
+  - dataset_config/demo_separated_dataset
+  - observation_config/dinov3cnnl_2v
+  - _self_
+
+n_obs_steps: 1
+output_dir: ${checkpoint_root}/${train_dataset.task}_${train_dataset.demo}/100hzs1_dit_fm_dinov3cnnl_2v

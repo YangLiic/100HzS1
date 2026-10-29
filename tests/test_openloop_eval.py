@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 spec = importlib.util.spec_from_file_location(
-    "vfa_openloop", Path(__file__).parents[1] / "scripts/openloop_eval/evaluate.py"
+    "s1_openloop", Path(__file__).parents[1] / "scripts/openloop_eval/evaluate.py"
 )
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -15,8 +15,8 @@ spec.loader.exec_module(module)
 class OpenLoopTest(unittest.TestCase):
     def test_cuda_graph_cli_default_and_opt_out(self):
         required = ['--checkpoint', '/unused/checkpoint', '--output', '/unused/output']
-        self.assertFalse(module.parser().parse_args(required).no_cuda_graph)
-        self.assertTrue(module.parser().parse_args(required + ['--no-cuda-graph']).no_cuda_graph)
+        self.assertIsNone(module.parser().parse_args(required).cuda_graph)
+        self.assertFalse(module.parser().parse_args(required + ['--no-cuda-graph']).cuda_graph)
 
     def test_no_future_observations_and_exact_future_gt(self):
         state, image, action = module.window_indices(30, 3, 1, 5, 100)

@@ -1,4 +1,5 @@
-"""Fixed-seed RoboTwin evaluation with an in-process VFA policy."""
+"""Fixed-seed RoboTwin evaluation with an in-process 100HzS1 policy."""
+from importlib import import_module as _import_module
 
 import argparse
 import importlib
@@ -21,6 +22,8 @@ from description.utils.generate_episode_instructions import (
     generate_episode_descriptions,
 )
 
+
+load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
 
 def read_seeds(path, count):
     values = [
@@ -60,7 +63,7 @@ def task_arguments(task, profile, output):
     args.update(
         task_name=task,
         task_config=profile,
-        policy_name="VFA",
+        policy_name="100HzS1",
         eval_mode=True,
         dual_arm_embodied=len(kinds) == 1,
     )
@@ -77,12 +80,12 @@ def runtime_record(policy_module):
     import envs
     import curobo
     import sapien
-    import vfa
+    s1 = _import_module('100hzs1')
 
     modules = {
         "envs": envs,
         "policy": policy_module,
-        "vfa": vfa,
+        "100hzs1": s1,
         "torch": torch,
         "sapien": sapien,
         "curobo": curobo,
@@ -201,18 +204,32 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed-list", type=Path, required=True)
     parser.add_argument("--episodes", type=int, default=100)
-    parser.add_argument("--task", default="blocks_ranking_rgb")
+    parser.add_argument("--task", default="beat_block_hammer")
     parser.add_argument("--task-config", default="demo_clean")
-    parser.add_argument("--nfe", type=int, default=4)
+    parser.add_argument("--nfe", type=int, default=None)
+    parser.add_argument("--inference-config", type=Path)
+    parser.add_argument("--cuda-graph", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--precision", choices=["bf16", "fp32"], default=None)
     args = parser.parse_args()
+    options = load_inference_options(args.inference_config, {
+        "num_inference_timesteps": args.nfe, "use_cuda_graph": args.cuda_graph,
+        "use_kv_cache": args.kv_cache, "precision": args.precision,
+    })
+    args.nfe = options["num_inference_timesteps"]
+    args.cuda_graph = options["use_cuda_graph"]
+    args.kv_cache = options["use_kv_cache"]
+    args.precision = options["precision"]
     seeds = read_seeds(args.seed_list, args.episodes)
     args.output.mkdir(parents=True, exist_ok=True)
     if (args.output / "episodes.jsonl").exists():
         raise FileExistsError("Use a fresh output directory")
-    import VFA as policy
+    policy = _import_module("policy.100hzs1")
 
     torch.set_num_threads(1)
-    model = policy.get_model({"ckpt_setting": str(args.checkpoint), "nfe": args.nfe})
+    model = policy.get_model({"ckpt_setting": str(args.checkpoint), "nfe": args.nfe,
+        "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
+        "precision": args.precision, "inference_config": args.inference_config})
     (args.output / "runtime.json").write_text(
         json.dumps(runtime_record(policy), indent=2)
     )
@@ -240,6 +257,8 @@ def main():
         "checkpoint": str(args.checkpoint),
         "task": args.task,
         "use_cuda_graph": model.use_cuda_graph,
+        "use_kv_cache": model.use_kv_cache,
+        "precision": model.precision,
         "cuda_graph_scope": "visual_backbone",
         "nfe": args.nfe,
         "episodes": len(records),

@@ -1,4 +1,5 @@
 """Inference-only CUDA Graph dispatch, lifetime, fallback and output ownership."""
+from importlib import import_module as _import_module
 from copy import deepcopy
 import inspect
 import unittest
@@ -7,9 +8,10 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from vfa.models.policy.vfa.dit_fm_policy import VFADitFlowMatching
-from vfa.models.policy.vfa.emvis.embodied_vision import EmVisRM, VisualEncoder
-from vfa.models.policy.vfa.emvis.inference_cuda_graph import BackboneCudaGraph
+S1DitFlowMatching = _import_module('100hzs1.models.policy.flow_matching.dit_fm_policy').S1DitFlowMatching
+EmVisRM = _import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision').EmVisRM
+VisualEncoder = _import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision').VisualEncoder
+BackboneCudaGraph = _import_module('100hzs1.models.policy.flow_matching.emvis.inference_cuda_graph').BackboneCudaGraph
 
 
 class TinyBackbone(nn.Module):
@@ -38,9 +40,11 @@ def tiny_scene():
 
 class CudaGraphDispatchTests(unittest.TestCase):
     def test_defaults_only_enable_graph_at_prediction_boundary(self):
-        self.assertIs(inspect.signature(VFADitFlowMatching.predict_action)
-                      .parameters['use_cuda_graph'].default, True)
-        for function in (VFADitFlowMatching.encode_image_conditions,
+        self.assertIs(inspect.signature(S1DitFlowMatching.predict_action)
+                      .parameters['use_cuda_graph'].default, None)
+        options = _import_module('100hzs1.common.inference').load_inference_options()
+        self.assertTrue(options['use_cuda_graph'])
+        for function in (S1DitFlowMatching.encode_image_conditions,
                          VisualEncoder.forward, EmVisRM.forward):
             self.assertIs(inspect.signature(function)
                           .parameters['use_cuda_graph'].default, False)
@@ -111,7 +115,7 @@ class CudaGraphReplayTests(unittest.TestCase):
         runner = BackboneCudaGraph(module)
         x = torch.rand(1, 3, 3, 8, 8, device='cuda')
         with torch.no_grad(), patch.object(runner, '_capture', side_effect=RuntimeError('test failure')) as capture:
-            with self.assertLogs('vfa.models.policy.vfa.emvis.inference_cuda_graph', level='WARNING'):
+            with self.assertLogs('100hzs1.models.policy.flow_matching.emvis.inference_cuda_graph', level='WARNING'):
                 first = runner(x)
             second = runner(x + 1)
             self.assertEqual(capture.call_count, 1)
@@ -138,7 +142,7 @@ class CudaGraphReplayTests(unittest.TestCase):
         runner = BackboneCudaGraph(module)
         x = torch.rand(1, 3, 3, 8, 8, device='cuda')
         with torch.no_grad():
-            with self.assertLogs('vfa.models.policy.vfa.emvis.inference_cuda_graph', level='WARNING'):
+            with self.assertLogs('100hzs1.models.policy.flow_matching.emvis.inference_cuda_graph', level='WARNING'):
                 actual = runner(x)['image_tokens']
             torch.testing.assert_close(actual, module(x)['image_tokens'], rtol=0, atol=0)
             actual = runner(x + 1)['image_tokens']

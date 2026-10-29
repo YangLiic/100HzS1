@@ -1,17 +1,17 @@
-# VFA 开环检查
+# 100HzS1 开环检查
 
-直接加载 VFA checkpoint，读取 LeRobot parquet 和 MP4，用真实历史观测预测下一段动作并与 GT 比较。无 RoboTwin、ZMQ 或服务端依赖。参考 OpenPI 的逐关节绘图方式，实际推理调用 VFA 的 `predict_action`。
+直接加载 100HzS1 checkpoint，读取 LeRobot parquet 和 MP4，用真实观测预测下一段动作（当前默认单帧，无历史）并与 GT 比较。无 RoboTwin、ZMQ 或服务端依赖。参考 OpenPI 的逐关节绘图方式，实际推理调用 100HzS1 的 `predict_action`。
 
 ## 运行
 
-在 VFA 根目录，使用训练环境（已有 Torch、PyAV、PyArrow）：
+在 100HzS1 根目录，使用训练环境（已有 Torch、PyAV、PyArrow）：
 
 ```bash
 uv pip install --python .venv/bin/python -r scripts/openloop_eval/requirements.txt
 scripts/openloop_eval/run.sh \
-  --checkpoint /DRoboticsAILab/users/licheng.yang/checkpoints/VFA/blocks_ranking_rgb/dinov3cnnb_3v_8gpu_L4_20261028/checkpoint-30000 \
+  --checkpoint /DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/blocks_ranking_rgb/dinov3cnnb_3v_8gpu_L4_20261028/checkpoint-30000 \
   --episodes 0 4 --nfe 10 \
-  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/openloop/base_ckpt30000
+  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/openloop/base_ckpt30000
 ```
 
 B2 只替换 checkpoint 路径，输出必须使用新目录。默认数据父目录是 `/DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14`，任务 `blocks_ranking_rgb`；可通过 `--dataset` 指定单任务目录或父目录，通过 `--task` 选择任务。默认完整评测 episode 0、4（原训练的 4 是验证集），步幅为模型动作 chunk 长度；`--anchors 30 120 220` 只检查指定窗口。
@@ -22,7 +22,7 @@ B2 只替换 checkpoint 路径，输出必须使用新目录。默认数据父�
 - 对第一帧未来动作 a：状态输入 `[a-n_obs,a)`，图像输入 `[a-n_image,a)`，GT 是 `action[a:a+chunk]`。当前配置为 1 帧状态、1 帧图像、23 帧未来动作（horizon24）；图像时刻 a-1。跳过边界不足的窗口，无补齐。
 - 14 维绝对关节动作：左右各 6 个关节（弧度）+1 个夹爪。图和误差使用反归一化后的原单位。
 - 默认 BF16 autocast，与直接 RoboTwin 推理相同；`--precision fp32` 会显式转换全部权重和时间嵌入的 dtype，避免混合 dtype 冲突。默认不额外 JPEG 编解码，原数据已经是视频。
-- 每个窗口都重新使用 GT 历史，**不把预测作为下一窗口输入**。固定噪声种子按 episode/anchor 生成；同条件可复现。NFE 是 VFA 原生均匀 Euler，并检查实际网络调用次数。
+- 每个窗口都重新使用 GT 观测，**不把预测作为下一窗口输入**。固定噪声种子按 episode/anchor 生成；同条件可复现。NFE 是 100HzS1 原生均匀 Euler，并检查实际网络调用次数。
 
 ## 产物与判读
 
@@ -53,4 +53,7 @@ save_state_comparison 的第一部分：4 列布局、蓝实线 GT、红虚线 P
 
 ep4 保持状态/匀速外推基线的关节 RMSE 为 0.06788/0.02175 rad。两模型曲线可贴合 GT；8 个抽样窗口中黑图、错配图像明显变差，FP32/JPEG 影响较小。这里只核查离线输入和短期预测，未证明闭环失败的唯一原因。
 
-完整结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/openloop/{base_checkpoint30000_v2,efficientvit_b2_checkpoint30000_v2}`。v1 是未完成的 FP32 诊断尝试，不作为有效结果。后续新权重使用新输出目录，按模型自身 n_obs/horizon 读取。
+完整结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/openloop/{base_checkpoint30000_v2,efficientvit_b2_checkpoint30000_v2}`。v1 是未完成的 FP32 诊断尝试，不作为有效结果。后续新权重使用新输出目录，按模型自身 n_obs/horizon 读取。
+
+运行时默认读取 configs/100hzs1_infer/default.yaml（10步、KV=true、CUDA Graph=true、bf16）；
+--inference-config 可替换 YAML，显式 --nfe/--kv-cache/--no-kv-cache/--cuda-graph/--no-cuda-graph 优先。

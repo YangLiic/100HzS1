@@ -7,7 +7,7 @@ UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 [ -n "$UV_BIN" ] || UV_BIN="$HOME/.local/bin/uv"
 [ -x "$UV_BIN" ] || { echo "Install uv first: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.cache/uv}"
-export TMPDIR="${VFA_SETUP_TMPDIR:-$ROOT/.cache/tmp}"
+export TMPDIR="${S1_SETUP_TMPDIR:-$ROOT/.cache/tmp}"
 mkdir -p "$UV_CACHE_DIR" "$TMPDIR"
 "$PYTHON_BIN" -c 'import sys; assert sys.version_info[:2] == (3,10), sys.version'
 if [ ! -f "$ENV_DIR/pyvenv.cfg" ]; then

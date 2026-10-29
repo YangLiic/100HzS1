@@ -1,3 +1,4 @@
+from importlib import import_module as _import_module
 import importlib.util
 import json
 import hashlib
@@ -8,12 +9,15 @@ import unittest
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = ROOT / "simulation/robotwin2.0/policy/VFA"
-sys.path.insert(0, str(POLICY.parent))
-from VFA.deploy_policy import CAMERAS, ObservationHistory, encode_obs, eval as evaluate
+POLICY = ROOT / "simulation/robotwin2.0/policy/100hzs1"
+sys.path.insert(0, str(POLICY.parents[1]))
+CAMERAS = _import_module('policy.100hzs1.deploy_policy').CAMERAS
+ObservationHistory = _import_module('policy.100hzs1.deploy_policy').ObservationHistory
+encode_obs = _import_module('policy.100hzs1.deploy_policy').encode_obs
+evaluate = _import_module('policy.100hzs1.deploy_policy').eval
 
 spec = importlib.util.spec_from_file_location(
-    "vfa_direct_launcher", POLICY / "evaluate.py"
+    "s1_direct_launcher", POLICY / "evaluate.py"
 )
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
