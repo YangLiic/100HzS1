@@ -35,7 +35,8 @@ class DiT(nn.Module):
         scene_cond_len=4096, # S * V * P
         scene_pos_embed_config=None, # S, V, P
         dtype=torch.bfloat16,
-        use_final_layer=True
+        use_final_layer=True,
+        flow_type="fm",
     ):
         super().__init__()
         self.use_final_layer = use_final_layer
@@ -46,6 +47,7 @@ class DiT(nn.Module):
         self.scene_pos_embed_config = scene_pos_embed_config
 
         self.t_embedder = TimestepEmbedder(hidden_size, dtype=dtype)
+        self.r_embedder = TimestepEmbedder(hidden_size, dtype=dtype) if flow_type == "meanflow" else None
         
         # We will use trainable sin-cos embeddings
         # [timestep; state; action]
@@ -92,6 +94,9 @@ class DiT(nn.Module):
         # Initialize timestep embedding MLP
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+        if self.r_embedder is not None:
+            nn.init.normal_(self.r_embedder.mlp[0].weight, std=0.02)
+            nn.init.normal_(self.r_embedder.mlp[2].weight, std=0.02)
         
         # Initialize the final layer: zero-out the final linear layer
         if self.use_final_layer:
@@ -108,7 +113,7 @@ class DiT(nn.Module):
         scene_c = scene_c + self.scene_cond_pos_embed
         return tuple(block.cross_attn.prepare_kv(scene_c) for block in self.blocks)
 
-    def forward(self, x, t, scene_c, scene_mask=None, kv_cache=None):
+    def forward(self, x, t, scene_c, scene_mask=None, kv_cache=None, r=None):
         """
         Forward pass of RDT.
         
@@ -123,7 +128,14 @@ class DiT(nn.Module):
         lang_mask: (B, L_lang) or None, language condition mask (True for valid).
         img_mask: (B, L_img) or None, image condition mask (True for valid).
         """
-        t = self.t_embedder(t).unsqueeze(1)             # (B, 1, D) or (1, 1, D)
+        t = self.t_embedder(t)
+        if self.r_embedder is not None:
+            if r is None:
+                raise ValueError("MeanFlow DiT requires continuous target time r")
+            t = t + self.r_embedder(r)
+        elif r is not None:
+            raise ValueError("FM DiT does not accept MeanFlow target time r")
+        t = t.unsqueeze(1)
         # Append timestep to the input tokens
         if t.shape[0] == 1:
             t = t.expand(x.shape[0], -1, -1)

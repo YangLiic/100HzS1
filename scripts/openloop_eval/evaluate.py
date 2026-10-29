@@ -14,7 +14,7 @@ import torch
 from safetensors.torch import load_model
 
 load_policy = _import_module('100hzs1.models.base_runner').load_policy
-load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+load_inference_options = _import_module("100hzs1.common.inference").checkpoint_inference_options
 configure_policy_inference = _import_module("100hzs1.common.inference").configure_policy_inference
 
 CAMERAS = {
@@ -281,7 +281,7 @@ def figure_path(output, checkpoint, split, episode):
 
 
 def run(args):
-    options = load_inference_options(args.inference_config, {
+    options = load_inference_options(args.checkpoint, args.inference_config, {
         "num_inference_timesteps": args.nfe, "precision": args.precision,
         "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
     })

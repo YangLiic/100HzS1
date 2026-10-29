@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = Path("/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1")
 
 
-load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+load_inference_options = _import_module("100hzs1.common.inference").checkpoint_inference_options
 records = _import_module("100hzs1.evaluation.records")
 
 def split_seeds(path, total, workers):
@@ -109,7 +109,9 @@ def main():
     parser.add_argument("--resume-from", type=Path)
     parser.add_argument("--max-worker-restarts", type=int, default=3)
     args = parser.parse_args()
-    options = load_inference_options(args.inference_config, {
+    config_path = args.checkpoint / "config.json"
+    flow_type = json.loads(config_path.read_text()).get("flow_type", "fm") if config_path.is_file() else "fm"
+    options = load_inference_options(args.checkpoint, args.inference_config, {
         "num_inference_timesteps": args.nfe, "use_cuda_graph": args.cuda_graph,
         "use_kv_cache": args.kv_cache, "precision": args.precision,
     })
@@ -174,7 +176,9 @@ def main():
         "precision": args.precision,
         "cuda_graph_scope": "visual_backbone",
         "nfe": args.nfe,
-        "tau": [i / args.nfe for i in range(args.nfe + 1)],
+        "flow_type": flow_type,
+        "tau": [(1 - i / args.nfe) if flow_type == "meanflow" else i / args.nfe
+                for i in range(args.nfe + 1)],
         "runtime": "single_process_direct_inference",
         "python": sys.executable,
         "channels": "RGB_no_flip",

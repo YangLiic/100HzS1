@@ -91,7 +91,7 @@ class DirectPolicy:
         self.network_calls = 0
         self.policy.model.register_forward_hook(self._count_call)
         print(
-            f"[100HzS1] direct/same-process device={self.device} nfe={nfe} "
+            f"[100HzS1] direct/same-process device={self.device} flow_type={self.policy.flow_type} nfe={nfe} "
             f"RGB/no-flip views={self.rgb_keys} obs={self.policy.n_obs_steps} "
             f"images={self.policy.n_image_obs_steps} actions={self.policy.n_action_steps} "
             f"cuda_graph={self.use_cuda_graph} graph_scope=visual_backbone",

@@ -82,6 +82,16 @@ obs_image_frame_indices: ${eval:'ListConfig(list(range(${n_obs_steps}-${n_image_
 n_action_steps: ${eval:'${horizon}-${n_obs_steps}'}
 n_latency_steps: 0
 model:
+  flow_type: fm
+  meanflow:
+    time_distribution: logit_normal
+    time_mean: -0.4
+    time_std: 1.0
+    equal_time_ratio: 0.5
+    loss_type: adaptive_l2
+    loss_gamma: 0.5
+    loss_eps: 1.0e-3
+    guidance_scale: 1.0
   target_config: 100hzs1.models.S1DitFlowMatchingConfig
   target_policy: 100hzs1.models.S1DitFlowMatching
   shape_meta: ${shape_meta}

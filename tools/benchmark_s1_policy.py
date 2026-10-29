@@ -80,6 +80,9 @@ def load_models(checkpoints):
         models[name] = model.cuda().eval()
         details[name] = dict(
             checkpoint=str(path), strict_reload=True,
+            flow_type=getattr(model, "flow_type", "fm"),
+            num_inference_timesteps=model.num_inference_timesteps,
+            inference=model.inference_options,
             config_sha256=hashlib.sha256((path / 'config.json').read_bytes()).hexdigest(),
             backbone_trainable=scene.backbone_trainable,
             parameters=sum(p.numel() for p in model.parameters()),
@@ -146,7 +149,7 @@ def main():
                        transformers=transformers.__version__, python=platform.python_version(),
                        torch_threads=1, cpu_affinity=sorted(os.sched_getaffinity(0)),
                        precision='BF16 autocast; original checkpoint parameter dtypes', tf32=False,
-                       compile=False, cuda_graph=not args.no_cuda_graph, nfe=10, horizon=24, n_obs=1, n_image_obs=1,
+                       compile=False, cuda_graph=not args.no_cuda_graph, nfe="per_model", horizon=24, n_obs=1, n_image_obs=1,
                        batch_definition='one synchronized observation = three RGB camera images plus proprioception',
                        rounds=args.rounds, repeats_per_round=args.repeats, warmup_per_case=args.warmup,
                        script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
