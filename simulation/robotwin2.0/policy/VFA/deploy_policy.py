@@ -61,13 +61,14 @@ class ObservationHistory:
 
 
 class DirectPolicy:
-    def __init__(self, checkpoint, device="cuda:0", nfe=4, jpeg=True):
+    def __init__(self, checkpoint, device="cuda:0", nfe=4, jpeg=True, use_cuda_graph=True):
         if nfe < 1:
             raise ValueError("nfe must be positive")
         self.policy = load_policy(str(checkpoint), device="cpu").eval()
         load_model(
             self.policy, str(Path(checkpoint) / "model.safetensors"), strict=True
         )
+        self.use_cuda_graph = bool(use_cuda_graph)
         self.device = torch.device(device)
         self.policy.to(self.device)
         self.policy.num_inference_timesteps = nfe
@@ -83,7 +84,8 @@ class DirectPolicy:
         print(
             f"[VFA] direct/same-process device={self.device} nfe={nfe} "
             f"RGB/no-flip views={self.rgb_keys} obs={self.policy.n_obs_steps} "
-            f"images={self.policy.n_image_obs_steps} actions={self.policy.n_action_steps}",
+            f"images={self.policy.n_image_obs_steps} actions={self.policy.n_action_steps} "
+            f"cuda_graph={self.use_cuda_graph} graph_scope=visual_backbone",
             flush=True,
         )
 
@@ -120,11 +122,15 @@ class DirectPolicy:
             torch.autocast(self.device.type, dtype=torch.bfloat16),
         ):
             action = (
-                self.policy.predict_action(observations)["action"][0]
+                self.policy.predict_action(observations, use_cuda_graph=self.use_cuda_graph)["action"][0]
                 .float()
                 .cpu()
                 .numpy()
             )
+        if self.use_cuda_graph and self.device.type == "cuda":
+            runner = self.policy.obs_encoder.scene_encoder._backbone_cuda_graph
+            if runner is None or runner.captures < 1 or runner.replays < 1:
+                raise RuntimeError("CUDA Graph was requested but no visual replay occurred")
         actual = self.network_calls - before
         if actual != self.policy.num_inference_timesteps:
             raise RuntimeError(
@@ -139,7 +145,9 @@ class DirectPolicy:
         if self.infer_index == 1 or self.infer_index % 25 == 0:
             print(
                 f"[VFA] seed={self.episode_seed} infer={self.infer_index} nfe={actual} "
-                f"action_steps={len(action)}",
+                f"action_steps={len(action)} cuda_graph={self.use_cuda_graph}"
+                + (f" graph_captures={runner.captures} graph_replays={runner.replays}"
+                   if self.use_cuda_graph and self.device.type == "cuda" else ""),
                 flush=True,
             )
         return action
@@ -150,6 +158,7 @@ def get_model(usr_args):
         usr_args["ckpt_setting"],
         device=usr_args.get("device", "cuda:0"),
         nfe=int(usr_args.get("nfe", 4)),
+        use_cuda_graph=usr_args.get("use_cuda_graph", True),
         jpeg=os.environ.get("VFA_JPEG_ROUNDTRIP", "1") == "1",
     )
 

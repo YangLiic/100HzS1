@@ -119,7 +119,7 @@ def load_inputs(root, models, batches):
     location = dict(episode_index=episode, episode_chunk=episode // info['chunks_size'])
     length = pq.read_metadata(DATASET / info['data_path'].format(**location)).num_rows
     anchors = np.linspace(30, length - 24, max(batches), dtype=int).tolist()
-    keys = models['dinov3_base'].obs_encoder.rgb_key
+    keys = next(iter(models.values())).obs_encoder.rgb_key
     assert all(m.obs_encoder.rgb_key == keys for m in models.values())
     states, actions, images, windows = offline.load_episode(DATASET, info, episode, keys, anchors, 1, 1, 23)
     observations = [offline.build_observation(states, images, window, keys, 'cpu', 'bgr') for window in windows]
@@ -145,6 +145,8 @@ def main():
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--repeats', type=int, default=50)
     parser.add_argument('--warmup', type=int, default=20)
+    parser.add_argument('--no-cuda-graph', action='store_true',
+                        help='Explicitly choose eager inference; default uses visual CUDA Graph')
     parser.add_argument('--training', action='store_true')
     parser.add_argument('--train-repeats', type=int, default=20)
     parser.add_argument('--train-warmup', type=int, default=5)
@@ -163,7 +165,7 @@ def main():
                        transformers=transformers.__version__, python=platform.python_version(),
                        torch_threads=1, cpu_affinity=sorted(os.sched_getaffinity(0)),
                        precision='BF16 autocast; original checkpoint parameter dtypes', tf32=False,
-                       compile=False, cuda_graph=False, nfe=10, horizon=24, n_obs=1, n_image_obs=1,
+                       compile=False, cuda_graph=not args.no_cuda_graph, nfe=10, horizon=24, n_obs=1, n_image_obs=1,
                        batch_definition='one synchronized observation = three RGB camera images plus proprioception',
                        rounds=args.rounds, repeats_per_round=args.repeats, warmup_per_case=args.warmup,
                        script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
@@ -186,7 +188,7 @@ def main():
                     for enabled in (False, True):
                         counts[:] = [0] * len(counts)
                         torch.manual_seed(42)
-                        outputs[enabled] = model.predict_action(gpu[batch], use_kv_cache=enabled, use_cuda_graph=False)['action']
+                        outputs[enabled] = model.predict_action(gpu[batch], use_kv_cache=enabled, use_cuda_graph=not args.no_cuda_graph)['action']
                         calls[str(enabled)] = list(counts)
                 finally:
                     for hook in hooks: hook.remove()
@@ -194,19 +196,22 @@ def main():
                 assert torch.isfinite(outputs[True]).all()
                 checks.append(dict(model=name, batch=batch, max_abs_error=float((outputs[True] - outputs[False]).abs().max()),
                                    shape=list(outputs[True].shape), per_layer_kv_calls=calls))
+                if not args.no_cuda_graph:
+                    runner = model.obs_encoder.scene_encoder._backbone_cuda_graph
+                    assert runner is not None and runner.captures > 0 and runner._failed_key is None
                 print('CHECK ' + json.dumps(checks[-1]), flush=True)
     (args.output / 'correctness.json').write_text(json.dumps(checks, indent=2))
     cases = []
     for batch in args.batch_sizes:
         for name, model in models.items():
             cases.append((name, batch, 'full_visual', None,
-                          lambda m=model, b=batch: m.obs_encoder(vision[b])))
+                          lambda m=model, b=batch: m.obs_encoder(vision[b], use_cuda_graph=not args.no_cuda_graph)))
             for cache in (False, True):
                 cases.append((name, batch, 'full_policy_gpu_inputs', cache,
-                              lambda m=model, b=batch, enabled=cache: m.predict_action(gpu[b], use_kv_cache=enabled, use_cuda_graph=False)))
+                              lambda m=model, b=batch, enabled=cache: m.predict_action(gpu[b], use_kv_cache=enabled, use_cuda_graph=not args.no_cuda_graph)))
             if batch == 1:
                 cases.append((name, batch, 'full_policy_host_float_inputs', True,
-                              lambda m=model, b=batch: m.predict_action(host[b], use_kv_cache=True, use_cuda_graph=False)))
+                              lambda m=model, b=batch: m.predict_action(host[b], use_kv_cache=True, use_cuda_graph=not args.no_cuda_graph)))
     records = []
     def save(record):
         records.append(record)
@@ -219,7 +224,7 @@ def main():
             elif round_index: order = order[len(order)//2:] + order[:len(order)//2]
             for name, batch, scope, cache, function in order:
                 assert compute_pids() == expected_pids, 'GPU sharing detected; benchmark invalidated'
-                row = dict(model=name, batch=batch, scope=scope, kv_cache=cache, round=round_index,
+                row = dict(model=name, batch=batch, scope=scope, kv_cache=cache, use_cuda_graph=not args.no_cuda_graph, round=round_index,
                            gpu_before=smi('temperature.gpu,clocks.current.sm,pstate,power.draw'))
                 row.update(measure(function, args.warmup, args.repeats))
                 row['observations_per_second'] = batch * 1000 / row['wall_summary']['p50_ms']

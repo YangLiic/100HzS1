@@ -1,0 +1,11 @@
+{
+  "source": "/DRoboticsAILab/vepfs_20260622/licheng.yang/openpi/inference/openloop/openloop_eval.py",
+  "source_sha256": "8e330c5ed051d4db48aa7eebffa10b64519d0532cc33652e070814b5fb1020d3",
+  "function": "save_state_comparison",
+  "retained": "first per-joint trajectory panel only",
+  "plotting_changes": [],
+  "omitted": [
+    "per-frame MAE figure"
+  ],
+  "style": "4 columns; 5x3.5 inches per panel; blue solid GT; red dashed Pred; gray chunk boundaries; dpi150"
+}

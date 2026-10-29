@@ -151,6 +151,7 @@ observation 配置、模型规格和权重路径，不能只改 `backbone_target
   新实验选择 `blocks_ranking_rgb_efficientvit_b2_native_3v_8gpu_L4.yaml`（B3 同理），
   已配置独立输出目录；窄维融合/压缩权重不兼容旧投影模式，不能原样恢复旧优化器状态。
 
+
 当前配置已清除未接入计算的历史字段，包括 `model.num_inference_steps`、
 `diffusion_step_embed_dim`、`down_dims`、`kernel_size`、`n_groups`、`cond_predict_scale`，
 以及调度器中的 `beta_schedule` / `prediction_type`、观察配置中的 `state_key` / `ft_layer_idx`。
@@ -187,10 +188,10 @@ PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 源码、YAML、文档和依赖锁文件提交 Git；数据、预训练/训练权重、资产软链接、
 环境、缓存、日志、W&B 与评测输出由 `.gitignore` 排除。
 
-
 ### Click Alarmclock 对比
 
 `click_alarmclock_dinov3cnnb_3v_8gpu_L4.yaml` 与 `click_alarmclock_efficientvit_b2_native_3v_8gpu_L4.yaml` 使用相同 50 集数据、单帧观测、horizon24（23 个未来动作）、三视角和冻结主干。离线数据 BGR 转 RGB，在线观测不翻转。两者评测均使用该任务专家筛选的同一 100 scene seed、最终主模型、10 步均匀 Euler。
+
 
 ### 推理 CUDA Graph（默认开启）
 
@@ -221,3 +222,11 @@ ONNX / TensorRT 推理不由这个 PyTorch 开关控制。
 离线评测脚本 `scripts/openloop_eval/evaluate.py` 默认启用，可加 `--no-cuda-graph` 关闭。
 旧的 eager 性能复测脚本已显式传 `use_cuda_graph=False`，保持既有测试口径。
 本次验证及完整策略时延见 [推理 CUDA Graph 报告](docs/VFA/inference_cuda_graph_20261028.md)。
+
+### 推理默认与测速顺序
+
+PyTorch 的 predict_action 默认 use_cuda_graph=True、use_kv_cache=True。
+CUDA Graph 当前只覆盖视觉主干；训练前向和优化器不受影响。
+测速入口 tools/benchmark_inference_cuda_graph.py 默认只运行 Graph，不附带 eager 对照；
+仅在明确选择后添加 --include-eager。开环默认同样开启 Graph。
+闭环记录实际 capture/replay，要求使用 Graph 时不能把未捕获的结果记为 Graph 结果。

@@ -239,6 +239,8 @@ def main():
     result = {
         "checkpoint": str(args.checkpoint),
         "task": args.task,
+        "use_cuda_graph": model.use_cuda_graph,
+        "cuda_graph_scope": "visual_backbone",
         "nfe": args.nfe,
         "episodes": len(records),
         "successes": sum(r["success"] for r in records),

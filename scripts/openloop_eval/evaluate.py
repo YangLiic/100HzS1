@@ -129,6 +129,10 @@ def predict(model, obs, seed, precision, use_cuda_graph=True):
             action = model.predict_action(obs, use_cuda_graph=use_cuda_graph)["action"][0].float().cpu().numpy()
     finally:
         hook.remove()
+    if use_cuda_graph and next(iter(obs.values())).is_cuda:
+        runner = model.obs_encoder.scene_encoder._backbone_cuda_graph
+        if runner is None or runner.captures < 1 or runner.replays < 1:
+            raise RuntimeError("CUDA Graph requested but no visual replay occurred")
     if len(calls) != model.num_inference_timesteps:
         raise RuntimeError(
             f"Expected NFE={model.num_inference_timesteps}, got {len(calls)}"
@@ -150,99 +154,67 @@ def metrics(prediction, target):
     }
 
 
-def save_plots(
-    output,
-    episode,
-    state,
-    action,
-    anchors,
-    predictions,
-    names,
-    n_obs,
-    images,
-    keys,
-    source_color,
-    nfe,
+def save_state_comparison(
+    gt_states: np.ndarray,
+    pred_states: np.ndarray,
+    save_dir: Path,
+    chunk_size: int,
+    state_names: list = None,
 ):
+    """OpenPI's trajectory panel, without its additional MAE figure."""
+    import os
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    os.makedirs(save_dir, exist_ok=True)
+    n_frames, n_dims = gt_states.shape
+    timesteps = np.arange(n_frames)
 
+    if state_names is None:
+        state_names = [f"dim_{i}" for i in range(n_dims)]
+
+    # --- 1. 逐 state 维度对比 ---
+    n_cols = 4
+    n_rows = (n_dims + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 3.5 * n_rows))
+    fig.suptitle("State: GT vs Predicted (full episode)", fontsize=14, fontweight="bold")
+    axes = axes.flatten()
+
+    for i in range(n_dims):
+        ax = axes[i]
+        ax.plot(timesteps, gt_states[:, i], "b-", label="GT", linewidth=1.5, alpha=0.8)
+        ax.plot(timesteps, pred_states[:, i], "r--", label="Pred", linewidth=1.5, alpha=0.8)
+        # 画 chunk 分界线
+        for seg_start in range(0, n_frames, chunk_size):
+            ax.axvline(x=seg_start, color="gray", linestyle=":", alpha=0.3)
+        ax.set_title(state_names[i], fontsize=11, fontweight="bold")
+        ax.set_xlabel("t")
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3)
+
+    for i in range(n_dims, len(axes)):
+        axes[i].set_visible(False)
+
+    plt.tight_layout()
+    path1 = save_dir / "state_comparison.png"
+    plt.savefig(path1, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
+def save_plots(
+    output, episode, state, action, anchors, predictions, names, n_obs,
+    images, keys, source_color, nfe,
+):
+    """Plot the existing future-GT windows in the user's OpenPI style."""
     chunk = predictions.shape[1]
-    fig, axes = plt.subplots(7, 2, figsize=(18, 18), sharex=True)
-    for dim, ax in enumerate(axes.flat):
-        ax.plot(np.arange(len(action)), action[:, dim], color="black", lw=1, label="GT")
-        for index, (anchor, prediction) in enumerate(zip(anchors, predictions)):
-            ax.plot(
-                np.arange(anchor, anchor + chunk),
-                prediction[:, dim],
-                color="tab:red",
-                lw=0.8,
-                alpha=0.8,
-                label="Predicted chunks" if index == 0 else None,
-            )
-        ax.set_title(names[dim] + (" (gripper)" if dim in GRIPPERS else " (rad)"))
-        ax.grid(alpha=0.2)
-        if dim == 0:
-            ax.legend()
-    for ax in axes[-1]:
-        ax.set_xlabel(
-            "Dataset frame (30 Hz); each red segment is independently conditioned on GT"
-        )
-    fig.suptitle(
-        f"Episode {episode}: GT vs VFA chunks, NFE={nfe}, action chunk={chunk}"
+    gt_states = np.concatenate(
+        [action[int(anchor):int(anchor) + chunk] for anchor in anchors], axis=0
     )
-    fig.tight_layout()
-    fig.savefig(output / "trajectory.png", dpi=130)
-    plt.close(fig)
-
-    selected = np.unique(
-        np.linspace(0, len(anchors) - 1, min(3, len(anchors)), dtype=int)
-    )
-    for index in selected:
-        anchor = int(anchors[index])
-        fig, axes = plt.subplots(7, 2, figsize=(15, 16), sharex=True)
-        past = np.arange(anchor - n_obs, anchor)
-        future = np.arange(anchor, anchor + chunk)
-        for dim, ax in enumerate(axes.flat):
-            ax.plot(
-                past,
-                state[past, dim],
-                "o-",
-                color="tab:blue",
-                label="Input state history",
-            )
-            ax.plot(
-                future,
-                action[future, dim],
-                "o-",
-                color="black",
-                label="GT future actions",
-            )
-            ax.plot(
-                future, predictions[index, :, dim], "x--", color="tab:red", label="VFA"
-            )
-            ax.axvline(anchor - 0.5, color="gray", ls=":")
-            ax.set_title(names[dim])
-            ax.grid(alpha=0.2)
-        axes[0, 0].legend(fontsize=8)
-        fig.suptitle(
-            f"Episode {episode}, first predicted frame={anchor}, latest input={anchor - 1}"
-        )
-        fig.tight_layout()
-        fig.savefig(output / f"chunk_{anchor:06d}.png", dpi=130)
-        plt.close(fig)
-    anchor = int(anchors[len(anchors) // 2])
-    fig, axes = plt.subplots(1, len(keys), figsize=(5 * len(keys), 4), squeeze=False)
-    for ax, key in zip(axes.flat, keys):
-        ax.imshow(source_to_rgb(images[key][anchor - 1], source_color))
-        ax.set_title(f"{key}: input frame {anchor - 1}")
-        ax.axis("off")
-    fig.tight_layout()
-    fig.savefig(output / "input_rgb.png", dpi=130)
-    plt.close(fig)
-
+    pred_states = predictions.reshape(-1, predictions.shape[-1])
+    if gt_states.shape != pred_states.shape:
+        raise ValueError("GT and predicted plot trajectories must align")
+    save_state_comparison(gt_states, pred_states, output, chunk, state_names=names)
 
 def use_fp32(model):
     model.float()

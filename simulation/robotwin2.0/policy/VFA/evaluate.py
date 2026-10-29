@@ -146,6 +146,8 @@ def main():
         "gpus": args.gpus,
         "seed_groups": groups,
         "expert_seed_provenance": seed_info,
+        "use_cuda_graph": True,
+        "cuda_graph_scope": "visual_backbone",
         "nfe": args.nfe,
         "tau": [i / args.nfe for i in range(args.nfe + 1)],
         "runtime": "single_process_direct_inference",

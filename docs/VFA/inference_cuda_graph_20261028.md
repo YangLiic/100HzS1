@@ -92,5 +92,6 @@ native变窄与Graph是两种独立变化；native未经训练不能据此判断
 [PyTorch捕获失败后RNG状态问题记录](https://github.com/pytorch/pytorch/issues/171263)。
 
 原始逐次计时及日志：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/VFA/benchmarks/20261028_inference_cuda_graph_v3`。
-复现命令：`.venv/bin/python tools/benchmark_inference_cuda_graph.py --output <全新目录>`。
+后续默认命令只测 Graph：.venv/bin/python tools/benchmark_inference_cuda_graph.py --output <全新目录>。
+上面的历史 eager/Graph 对照需显式 --include-eager 才会复现；是否追加 eager 对照由用户决定。
 机器可读汇总：[data/inference-cuda-graph-summary.json](data/inference-cuda-graph-summary.json)。

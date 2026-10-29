@@ -163,3 +163,7 @@ checkpoint 的 `config.json` 恢复结构，使用同一入口。
 
 无法找到专家接近姿态时，VFA 自有任务脚本标记 plan_success=False 并返回，
 由筛选器按专家失败处理；不修改有效场景动作或成功判据。
+
+推理默认开启视觉主干 CUDA Graph 和 K/V 缓存。评测日志记录实际 graph_captures/
+graph_replays；请求 Graph 但没有 replay 时终止，不能将回退结果冒充 Graph。
+先测 Graph；不自动追加 eager 对照，是否测试由用户决定。
