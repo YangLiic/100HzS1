@@ -35,11 +35,12 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     horizon: int
     n_action_steps: int
     n_obs_steps: int
-    action_key: str
+    # Observation field used as the state condition.
+    state_key: str
     # None keeps old checkpoints/configs coupled to n_obs_steps.
     n_image_obs_steps: Optional[int] = None
     # Key supervised by the flow-matching loss (column of batch['action']).
-    # None -> same as action_key (legacy statecopy behavior: condition and
+    # None -> same as state_key (legacy statecopy behavior: condition and
     # supervision share one key, e.g. both on 'state').
     # Set 'action' to keep the state condition while supervising the
     # commanded expert action.
@@ -48,6 +49,13 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     
 
     def __init__(self, *args, **kwargs):
+        # Migrate old configs/checkpoints; serialize only the canonical state_key.
+        legacy_state_key = kwargs.pop("action_key", None)
+        state_key = kwargs.get("state_key")
+        if legacy_state_key is not None:
+            if state_key is not None and state_key != legacy_state_key:
+                raise ValueError("state_key and legacy action_key must agree")
+            kwargs["state_key"] = legacy_state_key
         super().__init__(*args, **kwargs)
         
         self.auto_map = {}
@@ -96,7 +104,7 @@ def create_dit_model(
 
 class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
     config_class = S1DitFlowMatchingConfig
-    action_keys = ['state', 'delta_state', 'endpose', 'delta_endpose']
+    state_keys = ['state', 'delta_state', 'endpose', 'delta_endpose']
 
     def __init__(self, config: S1DitFlowMatchingConfig):
         super().__init__(config)
@@ -115,12 +123,12 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         # self.obs_encoder = EncoderClass(**config.obs_encoder)
         self.obs_encoder = VisualEncoder(**config.obs_encoder)
 
-        action_key = config.action_key
+        state_key = config.state_key
         action_meta = config.shape_meta['action']
         if 'shape' in action_meta:
             action_shape = action_meta['shape']
         else:
-            action_shape = action_meta[action_key]['shape']
+            action_shape = action_meta[state_key]['shape']
         horizon = config.horizon
         hidden_size = config.hidden_size
         n_action_steps = config.n_action_steps
@@ -181,10 +189,10 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         self.n_obs_steps = n_obs_steps
         self.n_image_obs_steps = n_image_obs_steps
         self.action_mask = action_mask
-        self.action_key = action_key
-        # Supervision target key: defaults to action_key (legacy behavior).
+        self.state_key = state_key
+        # Supervision target key: defaults to state_key (legacy behavior).
         self.supervision_key = (
-            getattr(config, 'supervision_key', None) or config.action_key
+            getattr(config, 'supervision_key', None) or config.state_key
         )
         # Persisted in checkpoints. Old checkpoints load with the all-False
         # default and therefore keep the legacy behavior.
@@ -368,11 +376,11 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         #         if key in self.normalizer.params_dict}
         filtered_obs_dict = {
             key: value for key, value in obs_dict.items() 
-            if key in self.action_keys
+            if key in self.state_keys
         }
         nobs.update(self.normalizer.normalize(filtered_obs_dict))
-        if self.action_key in nobs:
-            nobs[self.action_key] = self._zero_static_joints(nobs[self.action_key])
+        if self.state_key in nobs:
+            nobs[self.state_key] = self._zero_static_joints(nobs[self.state_key])
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
         T = self.horizon
@@ -386,7 +394,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             nobs, B, use_cuda_graph=bool(use_cuda_graph and not self.training)
         )
         state_traj = torch.zeros(size=(B, T, Da), device=device, dtype=dtype)
-        state_traj[:,:To,:] = nobs[self.action_key][:, :To].view(B, To, -1)
+        state_traj[:,:To,:] = nobs[self.state_key][:, :To].view(B, To, -1)
         action_mask = self.action_mask.expand(B, -1, -1).to(device=device)
 
         # run sampling
@@ -421,8 +429,8 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             }
         
         action = action_pred[:,start:end]
-        if 'delta' in self.action_key:
-            key = self.action_key.replace('delta_', '')
+        if 'delta' in self.state_key:
+            key = self.state_key.replace('delta_', '')
             action = self._zero_static_joints(action)
             result = {
                 'action': action + obs_dict[key][:,0:1,...],
@@ -431,7 +439,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             }
         else:
             action = self._hold_static_joints(
-                action, obs_dict[self.action_key]
+                action, obs_dict[self.state_key]
             )
             result = {
                 'action': action,
@@ -442,7 +450,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             flow = [smp[:,start:end] for smp in flow]
             result.update({
                 'flow': flow,
-                'gt': nobs[self.action_key][:,start:end]
+                'gt': nobs[self.state_key][:,start:end]
             })
         
         return result
@@ -460,9 +468,9 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         assert 'valid_mask' not in batch
         nobs = {**batch['obs']}
         nobs.update(self.normalizer.normalize(
-            {key: nobs[key] for key in self.action_keys if key in nobs}
+            {key: nobs[key] for key in self.state_keys if key in nobs}
         ))
-        state_traj = nobs[self.action_key]
+        state_traj = nobs[self.state_key]
         actions = self.normalizer.normalize(batch['action'])[self.supervision_key]
         state_traj = self._zero_static_joints(state_traj)
         actions = self._zero_static_joints(actions)

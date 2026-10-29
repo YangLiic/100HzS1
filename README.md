@@ -92,6 +92,12 @@ Python 包名为 100hzs1；Python 语法不允许直接写数字开头的 import
 外部调用使用 importlib，Hydra 中仍使用 100hzs1 的类路径。
 原始 RTPolicy 基线保持独立。
 
+模型配置中的 `state_key` 选择状态条件，`supervision_key` 选择预测的监督目标。
+当前 RoboTwin 配方使用 `state_key: state`、`supervision_key: action`，即根据
+实际关节状态预测专家动作指令；省略 `supervision_key` 时默认与 `state_key` 相同。
+旧配置/checkpoint 中的 `action_key` 会在加载时自动转换为 `state_key`，
+新保存的模型配置只写入 `state_key`。若同时提供新旧名称，两者必须一致。
+
 当前 Beat Block Hammer 配方：
 
 | 编码器 | 顶层 YAML（相对 configs/100hzs1_train） |

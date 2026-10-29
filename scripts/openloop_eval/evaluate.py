@@ -307,7 +307,7 @@ def run(args):
     model = load_policy(str(args.checkpoint), device="cpu", inference_config=args.inference_config).eval()
     configure_policy_inference(model, args.inference_config, options)
     model.to(args.device)
-    if model.action_key != "state" or model.supervision_key not in {"action", "state"}:
+    if model.state_key != "state" or model.supervision_key not in {"action", "state"}:
         raise ValueError("Only absolute joint14 policies are supported")
     keys = list(model.obs_encoder.rgb_key)
     if set(keys) - CAMERAS.keys():

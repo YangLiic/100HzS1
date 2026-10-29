@@ -68,7 +68,7 @@ train_dataset:
 # 1. Model weights and structure are read from checkpoint_dir/config.json.
 #    This checkpoint: 3 views (left/right/head), dinov3-cnn-base backbone,
 #    n_obs_steps=3 (state), n_image_obs_steps=1 (images use last frame),
-#    action_key=state, supervision_key=action.
+#    state_key=state, supervision_key=action.
 # 2. `num_inference_timesteps` overrides the checkpoint's
 #    `noise_scheduler.num_inference_timesteps` at export time; the FM loop is
 #    unrolled that many times into the graph. Re-export when it changes.

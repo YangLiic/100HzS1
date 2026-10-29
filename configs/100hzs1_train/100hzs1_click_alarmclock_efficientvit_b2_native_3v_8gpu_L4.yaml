@@ -40,7 +40,7 @@ n_image_obs_steps: 1
 horizon: 24
 
 model:
-  action_key: state
+  state_key: state
   # Condition on measured observation.state; predict the expert action column.
   supervision_key: action
 

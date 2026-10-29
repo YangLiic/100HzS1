@@ -81,8 +81,8 @@ class DirectPolicy:
         self.device = torch.device(device)
         self.policy.to(self.device)
         nfe = self.policy.num_inference_timesteps
-        if self.policy.action_key != "state":
-            raise ValueError("The current joint14 profile requires action_key=state")
+        if self.policy.state_key != "state":
+            raise ValueError("The current joint14 profile requires state_key=state")
         self.rgb_keys = list(self.policy.obs_encoder.rgb_key)
         self.history = ObservationHistory(
             self.policy.n_obs_steps, self.policy.n_image_obs_steps, self.rgb_keys

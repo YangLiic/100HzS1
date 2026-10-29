@@ -420,7 +420,7 @@ def train(args, logger):
     apply_dataset_normalizer(args, train_dataset, policy_model, ema_policy_model, logger)
     if (
         hasattr(train_dataset, "get_static_joint_info")
-        and getattr(policy_model, "action_key", None) in {"state", "delta_state"}
+        and getattr(policy_model, "state_key", None) in {"state", "delta_state"}
         and hasattr(policy_model, "set_static_joint_mask")
     ):
         static_joint_info = train_dataset.get_static_joint_info()

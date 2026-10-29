@@ -568,7 +568,7 @@ def _get_state_key(policy) -> str:
     obs_meta = policy.config.shape_meta["obs"]
     candidates = [
         getattr(policy.config, "state_traj_key", None),
-        getattr(policy.config, "action_key", None),
+        getattr(policy.config, "state_key", None),
         "state",
         "agent_pos",
     ]
@@ -1259,8 +1259,7 @@ def _build_onnx_runtime_metadata(
         "n_action_steps": int(getattr(policy, "n_action_steps", 0)),
         "horizon": int(getattr(policy, "horizon", 0)),
         "action_dim": int(getattr(policy, "action_dim", 0)),
-        "action_key": str(getattr(policy, "action_key", "")),
-        "supervision_key": str(getattr(policy, "supervision_key", None) or getattr(policy, "action_key", "")),
+        "supervision_key": str(getattr(policy, "supervision_key", None) or getattr(policy, "state_key", "")),
         "state_dim": int(tuple(obs_meta[state_key]["shape"])[0]) if state_key and state_key in obs_meta else None,
         "num_inference_timesteps": num_inference_timesteps,
         "num_timestep_buckets": int(getattr(policy, "num_timestep_buckets", 0)),
@@ -1595,8 +1594,8 @@ def _build_calibration_dataset(policy, args):
         dataset_cfg.pad_before = max(int(policy.n_obs_steps) - 1, 0)
     if _maybe_get(dataset_cfg, "pad_after") is None:
         dataset_cfg.pad_after = max(int(policy.horizon) - int(policy.n_obs_steps), 0)
-    if _maybe_get(dataset_cfg, "action_key") is None:
-        dataset_cfg.action_key = getattr(policy.config, "action_key", "action")
+    if _maybe_get(dataset_cfg, "state_key") is None:
+        dataset_cfg.state_key = getattr(policy.config, "state_key", "action")
 
     dataset = hydra.utils.instantiate(dataset_cfg)
     prefer_validation_dataset = bool(_maybe_get(args, "prefer_validation_dataset", True))
@@ -2270,7 +2269,7 @@ class PolicyExportWrapper(torch.nn.Module):
         self.n_image_obs_steps = int(
             getattr(policy, "n_image_obs_steps", None) or policy.n_obs_steps
         )
-        self.supervision_key = getattr(policy, "supervision_key", None) or policy.action_key
+        self.supervision_key = getattr(policy, "supervision_key", None) or policy.state_key
         self.image_preprocess_in_onnx = bool(image_preprocess_in_onnx)
         self.image_preprocess = (
             _build_image_preprocess_metadata(policy) if self.image_preprocess_in_onnx else None
@@ -2356,11 +2355,11 @@ class PolicyExportWrapper(torch.nn.Module):
         filtered_obs_dict = {
             key: value
             for key, value in obs_dict.items()
-            if key in getattr(policy, "action_keys", ())
+            if key in getattr(policy, "state_keys", ())
         }
         nobs.update(policy.normalizer.normalize(filtered_obs_dict))
-        if policy.action_key in nobs:
-            nobs[policy.action_key] = policy._zero_static_joints(nobs[policy.action_key])
+        if policy.state_key in nobs:
+            nobs[policy.state_key] = policy._zero_static_joints(nobs[policy.state_key])
 
         value = next(iter(nobs.values()))
         batch_size = value.shape[0]
@@ -2374,7 +2373,7 @@ class PolicyExportWrapper(torch.nn.Module):
             device=device,
             dtype=dtype,
         )
-        state_traj[:, :n_obs_steps, :] = nobs[policy.action_key][:, :n_obs_steps].view(
+        state_traj[:, :n_obs_steps, :] = nobs[policy.state_key][:, :n_obs_steps].view(
             batch_size, n_obs_steps, -1
         )
         action_mask = policy.action_mask.expand(batch_size, -1, -1).to(device=device)
@@ -2404,12 +2403,12 @@ class PolicyExportWrapper(torch.nn.Module):
         start = n_obs_steps
         end = start + int(policy.n_action_steps)
         action = action_pred[:, start:end]
-        if "delta" in policy.action_key:
-            key = policy.action_key.replace("delta_", "")
+        if "delta" in policy.state_key:
+            key = policy.state_key.replace("delta_", "")
             action = policy._zero_static_joints(action)
             action = action + obs_dict[key][:, 0:1, ...]
         else:
-            action = policy._hold_static_joints(action, obs_dict[policy.action_key])
+            action = policy._hold_static_joints(action, obs_dict[policy.state_key])
         return action, action_pred
 
 

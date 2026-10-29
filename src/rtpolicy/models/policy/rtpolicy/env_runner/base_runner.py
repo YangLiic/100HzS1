@@ -129,7 +129,7 @@ class RTPolicyRunner(BaseRunner):
             obs_dict_input["right_cam"] = obs_dict["right_cam"].unsqueeze(0)
             obs_dict_input["state"] = obs_dict["state"].unsqueeze(0)
             obs_dict_input["endpose"] = obs_dict["endpose"].unsqueeze(0)
-            if getattr(policy, "action_key", None) == "delta_state":
+            if getattr(policy, "state_key", None) == "delta_state":
                 # Match RTPolicyDataset: the first condition is absolute state;
                 # later observation steps are relative to that first state.
                 delta_state = obs_dict["state"] - obs_dict["state"][0:1]
@@ -146,7 +146,7 @@ class RTPolicyRunner(BaseRunner):
         # device_transfer
         np_action_dict = dict_apply(action_dict, lambda x: x.detach().to("cpu").numpy())
         action = np_action_dict["action"].squeeze(0)[:self.n_action_steps]
-        return action, 'ee' if 'endpose' in policy.action_key else None
+        return action, 'ee' if 'endpose' in policy.state_key else None
     
     def get_last_obs(self):
         return self.obs[-1]
