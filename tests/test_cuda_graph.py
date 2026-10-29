@@ -39,11 +39,11 @@ def tiny_scene():
 
 
 class CudaGraphDispatchTests(unittest.TestCase):
-    def test_defaults_only_enable_graph_at_prediction_boundary(self):
+    def test_graph_is_optional_and_disabled_by_default(self):
         self.assertIs(inspect.signature(S1DitFlowMatching.predict_action)
                       .parameters['use_cuda_graph'].default, None)
         options = _import_module('100hzs1.common.inference').load_inference_options()
-        self.assertTrue(options['use_cuda_graph'])
+        self.assertFalse(options['use_cuda_graph'])
         for function in (S1DitFlowMatching.encode_image_conditions,
                          VisualEncoder.forward, EmVisRM.forward):
             self.assertIs(inspect.signature(function)

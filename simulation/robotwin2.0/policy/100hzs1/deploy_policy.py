@@ -1,4 +1,4 @@
-"""Run 100HzS1 in the RoboTwin process and the same Python/Torch environment."""
+"""Run YAML-selected eager/TensorRT inference inside the RoboTwin control loop."""
 from importlib import import_module as _import_module
 
 from collections import deque
@@ -6,10 +6,7 @@ from pathlib import Path
 import os
 import cv2
 import numpy as np
-import torch
-from safetensors.torch import load_model
-load_policy = _import_module('100hzs1.models.base_runner').load_policy
-configure_policy_inference = _import_module("100hzs1.common.inference").configure_policy_inference
+load_inference_policy = _import_module('100hzs1.inference').load_inference_policy
 
 CAMERAS = {
     "left_cam": "left_camera",
@@ -64,42 +61,33 @@ class ObservationHistory:
 
 class DirectPolicy:
     def __init__(self, checkpoint, device="cuda:0", nfe=None, jpeg=True,
-                 use_cuda_graph=None, use_kv_cache=None, precision=None, inference_config=None):
-        if nfe is not None and nfe < 1:
-            raise ValueError("nfe must be positive")
-        self.policy = load_policy(str(checkpoint), device="cpu", inference_config=inference_config).eval()
-        load_model(
-            self.policy, str(Path(checkpoint) / "model.safetensors"), strict=True
-        )
-        options = configure_policy_inference(self.policy, inference_config, {
+                 use_cuda_graph=None, use_kv_cache=None, precision=None, inference_config=None,
+                 backend=None, tensorrt_engine_dir=None):
+        self.policy = load_inference_policy(checkpoint, device, inference_config, {
             "num_inference_timesteps": nfe, "use_cuda_graph": use_cuda_graph,
-            "use_kv_cache": use_kv_cache, "precision": precision,
+            "use_kv_cache": use_kv_cache, "precision": precision, "backend": backend,
+            "tensorrt_engine_dir": tensorrt_engine_dir,
         })
-        self.use_cuda_graph = options["use_cuda_graph"]
-        self.use_kv_cache = options["use_kv_cache"]
-        self.precision = options["precision"]
-        self.device = torch.device(device)
-        self.policy.to(self.device)
-        nfe = self.policy.num_inference_timesteps
-        if self.policy.state_key != "state":
-            raise ValueError("The current joint14 profile requires state_key=state")
-        self.rgb_keys = list(self.policy.obs_encoder.rgb_key)
-        self.history = ObservationHistory(
-            self.policy.n_obs_steps, self.policy.n_image_obs_steps, self.rgb_keys
-        )
+        options = self.policy.inference_options
+        self.backend, self.precision = options["backend"], options["precision"]
+        self.use_cuda_graph, self.use_kv_cache = options["use_cuda_graph"], options["use_kv_cache"]
+        self.device = str(device)
+        if self.policy.state_key != "state" or self.policy.action_dim != 14:
+            raise ValueError("The RoboTwin joint14 profile requires state_key=state, action_dim=14")
+        if self.backend == "tensorrt" and options["tensorrt_batch_size"] != 1:
+            raise ValueError("Direct RoboTwin control requires tensorrt_batch_size=1")
+        self.rgb_keys = list(self.policy.rgb_keys)
+        self.history = ObservationHistory(self.policy.n_obs_steps, self.policy.n_image_obs_steps, self.rgb_keys)
         self.jpeg, self.episode_seed, self.infer_index = jpeg, None, 0
         self.network_calls = 0
-        self.policy.model.register_forward_hook(self._count_call)
-        print(
-            f"[100HzS1] direct/same-process device={self.device} flow_type={self.policy.flow_type} nfe={nfe} "
-            f"RGB/no-flip views={self.rgb_keys} obs={self.policy.n_obs_steps} "
-            f"images={self.policy.n_image_obs_steps} actions={self.policy.n_action_steps} "
-            f"cuda_graph={self.use_cuda_graph} graph_scope=visual_backbone",
-            flush=True,
-        )
+        print(f"[100HzS1] backend={self.backend} precision={self.precision} device={self.device} "
+              f"flow_type={self.policy.flow_type} nfe={self.policy.num_inference_timesteps} "
+              f"RGB/no-flip views={self.rgb_keys} cuda_graph={self.use_cuda_graph} "
+              f"graph_scope={self.graph_stats['graph_scope']}", flush=True)
 
-    def _count_call(self, *_):
-        self.network_calls += 1
+    @property
+    def graph_stats(self):
+        return self.policy.graph_stats
 
     def set_episode_seed(self, seed):
         self.episode_seed, self.infer_index = int(seed), 0
@@ -107,6 +95,7 @@ class DirectPolicy:
     def reset(self):
         self.history.clear()
         self.infer_index = 0
+        self.policy.reset()
 
     def observe(self, observation):
         self.history.append(encode_obs(observation, self.rgb_keys, self.jpeg))
@@ -119,47 +108,26 @@ class DirectPolicy:
         for key, value in arrays.items():
             if key in self.rgb_keys:
                 value = np.moveaxis(value.astype(np.float32) / 255.0, -1, 1)
-            observations[key] = (
-                torch.from_numpy(np.ascontiguousarray(value))
-                .unsqueeze(0)
-                .to(self.device)
-            )
-        torch.manual_seed((self.episode_seed * 1_000_003 + self.infer_index) % (2**31))
-        before = self.network_calls
-        with (
-            torch.inference_mode(),
-            torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.precision == "bf16"),
-        ):
-            action = (
-                self.policy.predict_action(observations, use_cuda_graph=self.use_cuda_graph, use_kv_cache=self.use_kv_cache)["action"][0]
-                .float()
-                .cpu()
-                .numpy()
-            )
-        if self.use_cuda_graph and self.device.type == "cuda":
-            runner = self.policy.obs_encoder.scene_encoder._backbone_cuda_graph
-            if runner is None or runner.captures < 1 or runner.replays < 1:
-                raise RuntimeError("CUDA Graph was requested but no visual replay occurred")
-        actual = self.network_calls - before
+            observations[key] = np.ascontiguousarray(value)[None]
+        seed = (self.episode_seed * 1_000_003 + self.infer_index) % (2**31)
+        action = self.policy.predict_action(observations, seed=seed)["action"][0]
+        actual = self.policy.last_nfe
         if actual != self.policy.num_inference_timesteps:
-            raise RuntimeError(
-                f"Expected {self.policy.num_inference_timesteps} network calls, got {actual}"
-            )
-        if (
-            action.shape != (self.policy.n_action_steps, 14)
-            or not np.isfinite(action).all()
-        ):
+            raise RuntimeError(f"Expected {self.policy.num_inference_timesteps} steps, got {actual}")
+        if self.use_cuda_graph and not self.graph_stats["graph_replays"]:
+            raise RuntimeError("CUDA Graph was requested but did not replay")
+        if action.shape != (self.policy.n_action_steps, 14) or not np.isfinite(action).all():
             raise ValueError(f"Invalid joint14 actions: {action.shape}")
+        self.network_calls += actual
         self.infer_index += 1
         if self.infer_index == 1 or self.infer_index % 25 == 0:
-            print(
-                f"[100HzS1] seed={self.episode_seed} infer={self.infer_index} nfe={actual} "
-                f"action_steps={len(action)} cuda_graph={self.use_cuda_graph}"
-                + (f" graph_captures={runner.captures} graph_replays={runner.replays}"
-                   if self.use_cuda_graph and self.device.type == "cuda" else ""),
-                flush=True,
-            )
+            print(f"[100HzS1] seed={self.episode_seed} infer={self.infer_index} "
+                  f"backend={self.backend} nfe={actual} action_steps={len(action)} "
+                  f"cuda_graph={self.use_cuda_graph}", flush=True)
         return action
+
+    def close(self):
+        self.policy.close()
 
 
 def get_model(usr_args):
@@ -171,6 +139,8 @@ def get_model(usr_args):
         use_kv_cache=usr_args.get("use_kv_cache"),
         precision=usr_args.get("precision"),
         inference_config=usr_args.get("inference_config"),
+        backend=usr_args.get("backend"),
+        tensorrt_engine_dir=usr_args.get("tensorrt_engine_dir"),
         jpeg=os.environ.get("S1_JPEG_ROUNDTRIP", "1") == "1",
     )
 

@@ -1,0 +1,6 @@
+# TensorRT extras for the unified RoboTwin CUDA 12.6 environment.
+# Keep Torch's CUDA runtime pin; do not upgrade it during optional installation.
+nvidia-cuda-runtime-cu12==12.6.77
+tensorrt-cu12==10.9.0.34
+cuda-python==12.8.0
+onnx>=1.17,<2

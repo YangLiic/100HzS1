@@ -23,7 +23,7 @@ from description.utils.generate_episode_instructions import (
 )
 
 
-load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+load_inference_options = _import_module("100hzs1.common.inference").checkpoint_inference_options
 records = _import_module("100hzs1.evaluation.records")
 
 def read_seeds(path, count):
@@ -77,7 +77,7 @@ def task_arguments(task, profile, output):
     return args, f"{camera['w']}x{camera['h']}"
 
 
-def runtime_record(policy_module):
+def runtime_record(policy_module, model=None):
     import envs
     import curobo
     import sapien
@@ -117,6 +117,9 @@ def runtime_record(policy_module):
         "module_paths": origins,
         "architecture": "single_process_direct_inference",
         "rgb_channel_flip": False,
+        "backend": model.backend if model else None,
+        "precision": model.precision if model else None,
+        "cuda_graph": model.use_cuda_graph if model else None,
     }
 
 
@@ -212,16 +215,21 @@ def main():
     parser.add_argument("--inference-config", type=Path)
     parser.add_argument("--cuda-graph", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--precision", choices=["bf16", "fp32"], default=None)
+    parser.add_argument("--precision", choices=["fp16", "bf16", "fp32"], default=None)
+    parser.add_argument("--backend", choices=["eager", "tensorrt"], default=None)
+    parser.add_argument("--tensorrt-engine-dir", type=Path)
     args = parser.parse_args()
-    options = load_inference_options(args.inference_config, {
+    options = load_inference_options(args.checkpoint, args.inference_config, {
         "num_inference_timesteps": args.nfe, "use_cuda_graph": args.cuda_graph,
         "use_kv_cache": args.kv_cache, "precision": args.precision,
+        "backend": args.backend, "tensorrt_engine_dir": args.tensorrt_engine_dir,
     })
     args.nfe = options["num_inference_timesteps"]
     args.cuda_graph = options["use_cuda_graph"]
     args.kv_cache = options["use_kv_cache"]
     args.precision = options["precision"]
+    args.backend = options["backend"]
+    args.tensorrt_engine_dir = options["tensorrt_engine_dir"]
     seeds = args.seeds
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("Need distinct pinned seeds")
@@ -235,12 +243,14 @@ def main():
     video_dir = args.output / "videos"
     video_dir.mkdir(parents=True, exist_ok=True)
     policy = _import_module("policy.100hzs1")
+    model = None
     try:
         torch.set_num_threads(1)
         model = policy.get_model({"ckpt_setting": str(args.checkpoint), "nfe": args.nfe,
             "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
-            "precision": args.precision, "inference_config": args.inference_config})
-        records.append_event(args.journal, "runtime", runtime=runtime_record(policy))
+            "precision": args.precision, "inference_config": args.inference_config,
+            "backend": args.backend, "tensorrt_engine_dir": args.tensorrt_engine_dir})
+        records.append_event(args.journal, "runtime", runtime=runtime_record(policy, model))
         kwargs, video_size = task_arguments(args.task, args.task_config, video_dir)
         kwargs["ckpt_setting"] = str(args.checkpoint)
         environment = getattr(importlib.import_module(f"envs.{args.task}"), args.task)()
@@ -255,9 +265,7 @@ def main():
             record["completed_at"] = records.now()
             records.append_event(args.journal, "episode", record=record)
             print(f"EPISODE_COMPLETED {json.dumps(record)}", flush=True)
-        graph = model.policy.obs_encoder.scene_encoder._backbone_cuda_graph
-        graph_stats = dict(graph_captures=graph.captures if graph else 0,
-                           graph_replays=graph.replays if graph else 0)
+        graph_stats = model.graph_stats
         if model.use_cuda_graph and not (graph_stats["graph_captures"] and graph_stats["graph_replays"]):
             raise RuntimeError("Requested CUDA Graph did not replay")
         records.append_event(args.journal, "completed", graph=graph_stats)
@@ -266,6 +274,9 @@ def main():
         records.append_event(args.journal, "failed", error=f"{type(exc).__name__}: {exc}",
             retryable_scene=isinstance(exc, RuntimeError) and str(exc).startswith("Expert scene check failed for pinned seed"))
         raise
+    finally:
+        if model is not None:
+            model.close()
 
 
 if __name__ == "__main__":

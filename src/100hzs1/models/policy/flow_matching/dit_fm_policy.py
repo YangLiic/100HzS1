@@ -394,6 +394,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         gt: Dict[str, torch.Tensor] = None,
         use_kv_cache: Optional[bool] = None,
         use_cuda_graph: Optional[bool] = None,
+        noise_trajectory: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
@@ -437,6 +438,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         # run sampling
         nsample, flow = self.conditional_sample(
             scene_cond, state_traj, action_mask, return_flow, use_kv_cache=use_kv_cache,
+            noise_trajectory=noise_trajectory,
         )
         
         # unnormalize prediction

@@ -1,5 +1,8 @@
-# Shared inference defaults. Explicit CLI/call arguments take precedence.
+# Shared deployment defaults. Explicit YAML/CLI/call arguments take precedence.
+backend: eager             # eager (PyTorch) | tensorrt
+precision: bf16            # eager: fp16/bf16/fp32; TensorRT: fp16/fp32
 num_inference_timesteps: 10
 use_kv_cache: true
-use_cuda_graph: true
-precision: bf16
+use_cuda_graph: false      # optional addition to either backend
+tensorrt_batch_size: 1
+tensorrt_engine_dir: null  # null: $S1_TENSORRT_CACHE or .cache/100hzs1/tensorrt

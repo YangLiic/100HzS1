@@ -19,5 +19,9 @@ if [ ! -f "$ROOT/script/requirements.lock" ] || [ "${1:-}" = "--refresh-lock" ];
 fi
 "$UV_BIN" pip install --python "$ENV_DIR/bin/python" --torch-backend cu126 \
   --require-hashes -r "$ROOT/script/requirements.lock"
+if [ "${S1_INSTALL_TENSORRT:-0}" = "1" ]; then
+  "$UV_BIN" pip install --python "$ENV_DIR/bin/python" \
+    -r "$ROOT/script/requirements-tensorrt.txt"
+fi
 "$UV_BIN" pip check --python "$ENV_DIR/bin/python"
 echo "Unified runtime installed: $ENV_DIR"

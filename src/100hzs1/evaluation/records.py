@@ -129,6 +129,8 @@ def restore_progress(source, output, manifest, groups, gpus):
                 "gpus", "nfe", "use_cuda_graph", "use_kv_cache", "precision", "channels"):
         if old.get(key) != manifest.get(key):
             raise ValueError(f"Cannot resume after changing {key}")
+    if old.get("backend", "eager") != manifest.get("backend", "eager"):
+        raise ValueError("Cannot resume after changing backend")
     rows, states = collect(source, groups, gpus)
     if rows != old["results"]:
         raise ValueError("Source summary and journals disagree")

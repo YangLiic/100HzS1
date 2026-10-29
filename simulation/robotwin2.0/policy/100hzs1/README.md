@@ -5,6 +5,6 @@ evaluate.py 负责四卡调度和实时 result.json，script/eval_policy.py 负�
 deploy_policy.py 在同一 Python/Torch 环境直接调用 checkpoint 指定的主干与策略。
 不使用 TCP/ZMQ。
 
-默认10步均匀 Euler、KV与视觉 CUDA Graph开启，统一读取
+默认 PyTorch BF16、标准 FM 10 步均匀 Euler、KV 缓存，CUDA Graph 关闭；MeanFlow 默认单步。统一读取
 configs/100hzs1_infer/default.yaml。在线图像已是 RGB，不进行 BGR 转换。
 结果结构、实时字段与种子筛选见平台 README。

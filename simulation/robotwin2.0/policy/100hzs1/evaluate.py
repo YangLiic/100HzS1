@@ -104,7 +104,9 @@ def main():
     parser.add_argument("--inference-config", type=Path)
     parser.add_argument("--cuda-graph", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--precision", choices=["bf16", "fp32"], default=None)
+    parser.add_argument("--precision", choices=["fp16", "bf16", "fp32"], default=None)
+    parser.add_argument("--backend", choices=["eager", "tensorrt"], default=None)
+    parser.add_argument("--tensorrt-engine-dir", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume-from", type=Path)
     parser.add_argument("--max-worker-restarts", type=int, default=3)
@@ -114,11 +116,14 @@ def main():
     options = load_inference_options(args.checkpoint, args.inference_config, {
         "num_inference_timesteps": args.nfe, "use_cuda_graph": args.cuda_graph,
         "use_kv_cache": args.kv_cache, "precision": args.precision,
+        "backend": args.backend, "tensorrt_engine_dir": args.tensorrt_engine_dir,
     })
     args.nfe = options["num_inference_timesteps"]
     args.cuda_graph = options["use_cuda_graph"]
     args.kv_cache = options["use_kv_cache"]
     args.precision = options["precision"]
+    args.backend = options["backend"]
+    args.tensorrt_engine_dir = options["tensorrt_engine_dir"]
     if (
         args.nfe < 1 or args.max_worker_restarts < 0
         or len(set(args.gpus)) != len(args.gpus)
@@ -174,7 +179,8 @@ def main():
         "use_cuda_graph": args.cuda_graph,
         "use_kv_cache": args.kv_cache,
         "precision": args.precision,
-        "cuda_graph_scope": "visual_backbone",
+        "backend": args.backend,
+        "cuda_graph_scope": "full_pipeline" if args.backend == "tensorrt" else "visual_backbone",
         "nfe": args.nfe,
         "flow_type": flow_type,
         "tau": [(1 - i / args.nfe) if flow_type == "meanflow" else i / args.nfe
@@ -212,6 +218,7 @@ def run_workers(args, manifest, groups, worker_entry=None, interval=1):
     manifest.update(checkpoint=str(args.checkpoint.resolve()), task=args.task,
         task_config=args.task_config, seed_groups=groups, gpus=args.gpus, nfe=args.nfe,
         use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache, precision=args.precision,
+        backend=getattr(args, "backend", "tensorrt"),
         channels="RGB_no_flip", max_worker_restarts=getattr(args, "max_worker_restarts", 3))
     processes, handles, commands, environments = [], [], [], []
     worker_entry = worker_entry or ROOT / "script/eval_policy.py"
@@ -246,7 +253,10 @@ def run_workers(args, manifest, groups, worker_entry=None, interval=1):
                        "--task-config", args.task_config, "--nfe", str(args.nfe),
                        "--cuda-graph" if args.cuda_graph else "--no-cuda-graph",
                        "--kv-cache" if args.kv_cache else "--no-kv-cache",
-                       "--precision", args.precision]
+                       "--precision", args.precision,
+                       "--backend", getattr(args, "backend", "tensorrt")]
+            if getattr(args, "tensorrt_engine_dir", None):
+                command += ["--tensorrt-engine-dir", str(args.tensorrt_engine_dir)]
             if source:
                 command.append("--resume")
             if args.inference_config:

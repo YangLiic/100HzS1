@@ -41,6 +41,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tensorrt = [
+    "tensorrt-cu12==10.9.0.34",
+    "cuda-python==12.8.0",
+    "onnx>=1.17,<2",
+]
 lance = [
     "lancedb==0.33.0",
     "pylance==7.0.0",

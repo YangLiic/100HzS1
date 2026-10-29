@@ -1,4 +1,4 @@
-"""Load current 100hzs1 checkpoints through the installed package."""
+"""Torch model loader for training/export; configured deployment uses load_inference_policy."""
 from pathlib import Path
 from typing import Dict
 import hydra
@@ -17,6 +17,11 @@ def load_policy(ckp_path, device=None, inference_config=None) -> BasePolicy:
     load_model(policy, str(Path(ckp_path) / "model.safetensors"), strict=True, device=device or "cpu")
     configure_policy_inference(policy, inference_config)
     return policy
+
+def load_inference_policy(ckp_path, device="cuda:0", inference_config=None, overrides=None):
+    """Load the YAML-selected eager or TensorRT deployment backend."""
+    from ..inference import load_inference_policy as load
+    return load(ckp_path, device, inference_config, overrides)
 
 class BaseRunner:
     def __init__(self, output_dir):

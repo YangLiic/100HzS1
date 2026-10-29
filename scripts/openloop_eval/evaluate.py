@@ -13,9 +13,12 @@ import pyarrow.parquet as pq
 import torch
 from safetensors.torch import load_model
 
-load_policy = _import_module('100hzs1.models.base_runner').load_policy
+load_inference_policy = _import_module('100hzs1.inference').load_inference_policy
 load_inference_options = _import_module("100hzs1.common.inference").checkpoint_inference_options
 configure_policy_inference = _import_module("100hzs1.common.inference").configure_policy_inference
+
+OPENLOOP_OUTPUT_ROOT = Path("/DRoboticsAILab/users/licheng.yang/openloop_eval")
+
 
 CAMERAS = {
     "left_cam": "observation.images.left",
@@ -119,6 +122,9 @@ def build_observation(
 
 
 def predict(model, obs, seed, precision, use_cuda_graph=None, use_kv_cache=None):
+    if getattr(model, "backend", None) in {"eager", "tensorrt"}:
+        result = model.predict_action(obs, seed=seed, use_cuda_graph=use_cuda_graph, use_kv_cache=use_kv_cache)
+        return result["action"][0]
     torch.manual_seed(seed)
     cast = (
         torch.autocast("cuda", dtype=torch.bfloat16)
@@ -276,14 +282,30 @@ def checkpoint_name(checkpoint):
     return name
 
 
-def figure_path(output, checkpoint, split, episode):
-    return output / f"{checkpoint_name(checkpoint)}_{split}_ep{episode:06d}.png"
+def output_directory(output):
+    root = OPENLOOP_OUTPUT_ROOT.resolve()
+    output = Path(output)
+    output = (output if output.is_absolute() else root / output).resolve()
+    try:
+        output.relative_to(root)
+    except ValueError:
+        raise ValueError(f"Open-loop output must be inside {root}; got {output}") from None
+    return output
+
+
+def figure_path(output, checkpoint, split, episode, tag=None):
+    if tag is not None and (not tag or tag in {".", ".."} or Path(tag).name != tag):
+        raise ValueError("--tag must be a nonempty filename label without path separators")
+    suffix = f"_{tag}" if tag else ""
+    return output / f"{checkpoint_name(checkpoint)}{suffix}_{split}_ep{episode:06d}.png"
 
 
 def run(args):
+    args.output = output_directory(args.output)
     options = load_inference_options(args.checkpoint, args.inference_config, {
         "num_inference_timesteps": args.nfe, "precision": args.precision,
         "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
+        "backend": args.backend, "tensorrt_engine_dir": args.tensorrt_engine_dir,
     })
     args.checkpoint = args.checkpoint.resolve()
     root = args.dataset
@@ -293,9 +315,9 @@ def run(args):
     if info.get("robotwin_action_space") != "absolute_joint14":
         raise ValueError("Dataset must declare robotwin_action_space=absolute_joint14")
     episodes = choose_episodes(root, training_dataset_options(args.checkpoint, args.training_config), args.episodes)
-    paths = [figure_path(args.output, args.checkpoint, split, ep) for split, ep in episodes]
+    paths = [figure_path(args.output, args.checkpoint, split, ep, getattr(args, "tag", None)) for split, ep in episodes]
     if any(p.exists() for p in paths):
-        raise FileExistsError("An output image already exists; select another output directory")
+        raise FileExistsError("An output image already exists; use another --tag or a subdirectory of the open-loop output root")
     args.output.mkdir(parents=True, exist_ok=True)
     if args.dry_run:
         print(json.dumps(dict(checkpoint=str(args.checkpoint), dataset=str(root),
@@ -304,12 +326,10 @@ def run(args):
                       for (split, ep), path in zip(episodes, paths)]), indent=2))
         return
     torch.set_num_threads(4)
-    model = load_policy(str(args.checkpoint), device="cpu", inference_config=args.inference_config).eval()
-    configure_policy_inference(model, args.inference_config, options)
-    model.to(args.device)
+    model = load_inference_policy(args.checkpoint, args.device, args.inference_config, options)
     if model.state_key != "state" or model.supervision_key not in {"action", "state"}:
         raise ValueError("Only absolute joint14 policies are supported")
-    keys = list(model.obs_encoder.rgb_key)
+    keys = list(model.rgb_keys)
     if set(keys) - CAMERAS.keys():
         raise ValueError(f"Unmapped cameras: {keys}")
     chunk, n_obs, n_image = model.n_action_steps, model.n_obs_steps, model.n_image_obs_steps
@@ -326,7 +346,7 @@ def run(args):
         state, action, images, windows = load_episode(root, info, episode, keys, anchors, n_obs, n_image, chunk)
         predictions = []
         for anchor, window in zip(anchors, windows):
-            obs = build_observation(state, images, window, keys, args.device, args.source_color)
+            obs = build_observation(state, images, window, keys, "cpu", args.source_color)
             noise_seed = (args.seed + episode * 1_000_003 + int(anchor)) % (2**31)
             predictions.append(predict(model, obs, noise_seed, options["precision"],
                 use_cuda_graph=options["use_cuda_graph"], use_kv_cache=options["use_kv_cache"]))
@@ -339,6 +359,7 @@ def run(args):
                       prediction=metrics(predictions, target))
         report.append(result)
         print("OPENLOOP_EPISODE " + json.dumps(result), flush=True)
+    model.close()
     print("OPENLOOP_COMPLETED " + json.dumps(report), flush=True)
     return report
 
@@ -365,9 +386,13 @@ def parser():
         help="First future action indices; default whole episode",
     )
     p.add_argument("--stride", type=int, help="Default action chunk length")
-    p.add_argument("--output", type=Path, default=Path("/DRoboticsAILab/users/licheng.yang/openloop_eval"))
+    p.add_argument("--output", type=Path, default=OPENLOOP_OUTPUT_ROOT,
+                   help="Unified output root or a subdirectory within it; relative paths are rooted there")
+    p.add_argument("--tag", help="Optional filename label, e.g. tensorrt_fp16_nfe1_graph-off")
     p.add_argument("--source-color", choices=["bgr", "rgb"], default="bgr")
-    p.add_argument("--precision", choices=["bf16", "fp32"], default=None)
+    p.add_argument("--precision", choices=["fp16", "bf16", "fp32"], default=None)
+    p.add_argument("--backend", choices=["eager", "tensorrt"], default=None)
+    p.add_argument("--tensorrt-engine-dir", type=Path)
     p.add_argument("--inference-config", type=Path)
     p.add_argument("--cuda-graph", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--kv-cache", action=argparse.BooleanOptionalAction, default=None)
