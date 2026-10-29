@@ -362,7 +362,11 @@ def train(args, logger):
     config = ConfigClass.from_dict(model_args)
     policy_model = PolicyClass(config)
     if hasattr(args, "checkpoint_dir") and args.checkpoint_dir:
-        load_model(policy_model, os.path.join(args.checkpoint_dir, "model.safetensors"), strict=False)
+        from ..common.checkpoint import load_checkpoint_config
+        saved_config = load_checkpoint_config(args.checkpoint_dir)
+        if saved_config.get("flow_type", "fm") != config.flow_type:
+            raise ValueError("checkpoint_dir must use the same flow_type; FM-to-MeanFlow migration is not a resume")
+        load_model(policy_model, os.path.join(args.checkpoint_dir, "model.safetensors"), strict=True)
     # policy_model = load_policy("checkpoints/dp_baseline/test", use_ckp_code = True)
     policy_model.to(accelerator.device)
 
@@ -528,6 +532,10 @@ def train(args, logger):
             args.resume_from_checkpoint = None
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
+            from ..common.checkpoint import load_checkpoint_config
+            resumed_config = load_checkpoint_config(os.path.join(args.output_dir, path))
+            if resumed_config.get("flow_type", "fm") != config.flow_type:
+                raise ValueError("resume_from_checkpoint cannot change flow_type")
             try:
                 # torch>=2.6 defaults weights_only=True and accelerate's load() sets it
                 # explicitly, breaking on omegaconf objects in saved states.

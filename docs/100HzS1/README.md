@@ -8,4 +8,4 @@
 
 图表位于 `figures/`，机器可读汇总位于 `data/`。原始逐次计时和trace路径见各报告。
 
-注意：native融合/压缩层尚未训练，只报告结构时延；早期CUDA Graph报告是裸主干诊断对照；最新PyTorch推理已默认启用视觉主干CUDA Graph和K/V缓存，范围与验证见新增报告。
+注意：native融合/压缩层尚未训练，只报告结构时延；早期CUDA Graph报告是裸主干诊断对照。当前默认使用 PyTorch BF16 和 K/V 缓存，CUDA Graph 默认关闭；历史报告描述的是当时的配置。

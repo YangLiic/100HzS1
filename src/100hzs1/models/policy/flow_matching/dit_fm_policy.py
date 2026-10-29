@@ -17,6 +17,7 @@ from ..flow_matching.common.normalizer import LinearNormalizer
 from ..flow_matching.common.module_attr_mixin import ModuleAttrMixin
 
 from ....common.inference import load_inference_options
+from .meanflow import validate_options, sample_time_pairs, objective, time_embedding_scale
 
 import yaml
 import json
@@ -46,6 +47,8 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     # commanded expert action.
     supervision_key: Optional[str] = None
     self_attn_first: bool = True
+    flow_type: str = "fm"
+    meanflow: Optional[dict] = None
     
 
     def __init__(self, *args, **kwargs):
@@ -62,6 +65,11 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
         self.pkg_map = {}
         for key, value in kwargs.items():
             setattr(self, key, value)
+        self.flow_type = kwargs.get("flow_type", "fm")
+        if self.flow_type not in {"fm", "meanflow"}:
+            raise ValueError("flow_type must be fm or meanflow")
+        if self.flow_type == "meanflow":
+            self.meanflow = validate_options(kwargs.get("meanflow"))
     
     @classmethod
     def from_customed_yaml(cls, yaml_path: str):
@@ -99,7 +107,8 @@ def create_dit_model(
         num_heads=config.num_heads,
         self_attn_first=config.self_attn_first,
         scene_cond_len=scene_cond_len,
-        scene_pos_embed_config=scene_pos_embed_config
+        scene_pos_embed_config=scene_pos_embed_config,
+        flow_type=getattr(config, "flow_type", "fm"),
     )
 
 class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
@@ -108,9 +117,11 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
     def __init__(self, config: S1DitFlowMatchingConfig):
         super().__init__(config)
+        self.flow_type = config.flow_type
+        self.meanflow_options = config.meanflow if self.flow_type == "meanflow" else None
         self.num_timestep_buckets = config.noise_scheduler['num_train_timesteps']
         self.inference_options = load_inference_options(
-            overrides=getattr(config, "inference", None)
+            checkpoint_config=config.to_dict()
         )
         self.num_inference_timesteps = self.inference_options["num_inference_timesteps"]
         self.beta_dist = torch.distributions.Beta(
@@ -164,7 +175,8 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             num_heads=config.num_heads,
             self_attn_first=config.self_attn_first,
             scene_cond_len=scene_cond_len,
-            scene_pos_embed_config=scene_pos_embed_config
+            scene_pos_embed_config=scene_pos_embed_config,
+            flow_type=self.flow_type,
         )
 
         self.scene_adaptor = self.build_condition_adapter(
@@ -289,7 +301,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
     # ========= inference  ============
     def conditional_sample(
             self, scene_cond, state_traj, action_mask, return_flow:bool = False,
-            use_kv_cache: bool = True, **kwargs
+            use_kv_cache: bool = True, noise_trajectory=None, **kwargs
         ) -> torch.Tensor:
         '''
         scene_cond: image conditional data, (batch_size, patch_num, hidden_size).
@@ -300,11 +312,14 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         device = state_traj.device
         dtype = state_traj.dtype
         batch_size = state_traj.shape[0]
-        noisy_action = torch.randn(
-            size=(batch_size, self.horizon, self.action_dim), 
+        noisy_action = (torch.randn(
+            size=(batch_size, self.horizon, self.action_dim),
             dtype=dtype, device=device
-        )
+        ) if noise_trajectory is None else noise_trajectory.to(device=device, dtype=dtype))
         noisy_action = self._zero_static_joints(noisy_action)
+        if getattr(self, "flow_type", "fm") == "meanflow":
+            return self._sample_meanflow(scene_cond, state_traj, action_mask, noisy_action,
+                                         return_flow, use_kv_cache)
         flow = []
         if return_flow:
             flow.append(noisy_action.detach().cpu().numpy())
@@ -349,6 +364,28 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
         return noisy_action, flow
 
+    def _sample_meanflow(self, scene_cond, state_traj, action_mask, value,
+                         return_flow=False, use_kv_cache=True):
+        # The observed prefix and inactive joints are constants throughout the flow.
+        value = torch.where(action_mask, value, state_traj)
+        value = self._zero_static_joints(value)
+        flow = [value.detach().cpu().numpy()] if return_flow else []
+        cache = None
+        if use_kv_cache and not self.training and not torch.is_grad_enabled():
+            cache = self.model.prepare_kv_cache(scene_cond)
+        steps = self.num_inference_timesteps
+        time_scale = time_embedding_scale(getattr(self, "meanflow_options", None), self.num_timestep_buckets)
+        for index in range(steps):
+            t = torch.full((value.shape[0],), 1 - index / steps, device=value.device, dtype=torch.float32)
+            r = torch.full_like(t, 1 - (index + 1) / steps)
+            velocity = self.model(self.state_adaptor(value), t * time_scale,
+                                  scene_cond, r=r * time_scale, kv_cache=cache)
+            value = value - velocity / steps
+            value = self._zero_static_joints(torch.where(action_mask, value, state_traj))
+            if return_flow:
+                flow.append(value.detach().cpu().numpy())
+        return value, flow
+
     @torch.no_grad()
     def predict_action(
         self, 
@@ -357,6 +394,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         gt: Dict[str, torch.Tensor] = None,
         use_kv_cache: Optional[bool] = None,
         use_cuda_graph: Optional[bool] = None,
+        noise_trajectory: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
@@ -400,6 +438,7 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         # run sampling
         nsample, flow = self.conditional_sample(
             scene_cond, state_traj, action_mask, return_flow, use_kv_cache=use_kv_cache,
+            noise_trajectory=noise_trajectory,
         )
         
         # unnormalize prediction
@@ -463,7 +502,35 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         sample = self.beta_dist.sample([batch_size]).to(device, dtype=dtype)
         return (self.noise_s - sample) / self.noise_s
 
+    def _compute_meanflow_loss(self, batch):
+        nobs = {**batch['obs']}
+        nobs.update(self.normalizer.normalize(
+            {key: nobs[key] for key in self.state_keys if key in nobs}))
+        state = self._zero_static_joints(nobs[self.state_key])
+        actions = self._zero_static_joints(
+            self.normalizer.normalize(batch['action'])[self.supervision_key])
+        scene = self.encode_image_conditions(nobs, actions.shape[0])
+        action_mask = self.action_mask.expand(actions.shape[0], -1, -1).to(actions.device)
+        active = action_mask & (~self.static_joint_mask).view(1, 1, -1)
+        t, r = sample_time_pairs(actions.shape[0], actions.device, self.meanflow_options)
+        noise = self._zero_static_joints(torch.randn_like(actions))
+        z = (1 - t[:, None, None]) * actions + t[:, None, None] * noise
+        z = torch.where(action_mask, z, state)
+        velocity = torch.where(active, noise - actions, torch.zeros_like(actions))
+        time_scale = time_embedding_scale(self.meanflow_options, self.num_timestep_buckets)
+
+        def predict(raw, time, target_time):
+            # Clamp in the differentiated function as well: fixed conditions have zero tangent.
+            raw = torch.where(active, raw, torch.where(action_mask, torch.zeros_like(raw), state))
+            return self.model(self.state_adaptor(raw), time * time_scale,
+                              scene, r=target_time * time_scale)
+
+        return objective(predict, z, t, r, velocity, active, self.meanflow_options, self.model)
+
     def compute_loss(self, batch):
+        if getattr(self, "flow_type", "fm") == "meanflow":
+            assert 'valid_mask' not in batch
+            return self._compute_meanflow_loss(batch)
         # normalize input
         assert 'valid_mask' not in batch
         nobs = {**batch['obs']}

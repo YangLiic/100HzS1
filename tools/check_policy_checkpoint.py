@@ -29,17 +29,21 @@ def main():
     weights=[("main",args.checkpoint/"model.safetensors")]
     if (args.checkpoint/"ema/model.safetensors").exists():
         weights.append(("ema",args.checkpoint/"ema/model.safetensors"))
+    calls = []
+    model.model.register_forward_hook(lambda *args: calls.append(1))
     for label,path in weights:
+        calls.clear()
         load_model(model,str(path),strict=True,device=args.device)
         with torch.inference_mode(),torch.autocast(torch.device(args.device).type,dtype=torch.bfloat16,
                     enabled=model.inference_options["precision"]=="bf16"):
             action=model.predict_action(observations)["action"]
+        assert len(calls) == model.num_inference_timesteps, (len(calls), model.num_inference_timesteps)
         assert action.shape==(1,model.n_action_steps,14) and torch.isfinite(action).all()
         runner=model.obs_encoder.scene_encoder._backbone_cuda_graph
         if model.inference_options["use_cuda_graph"] and torch.device(args.device).type=="cuda":
             assert runner is not None and runner.captures==1 and runner.replays>=1
         print(json.dumps(dict(checkpoint=str(args.checkpoint),weights=label,strict_reload=True,
-            action_shape=list(action.shape),finite=True,inference=model.inference_options,
+            action_shape=list(action.shape),finite=True,flow_type=model.flow_type,network_calls=len(calls),inference=model.inference_options,
             graph_captures=runner.captures if runner else 0,graph_replays=runner.replays if runner else 0)),flush=True)
 
 if __name__=="__main__":

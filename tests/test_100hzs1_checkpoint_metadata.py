@@ -21,7 +21,8 @@ class CurrentMetadataTests(unittest.TestCase):
 
     def test_default_yaml_and_explicit_overrides(self):
         self.assertEqual(i.load_inference_options(), dict(num_inference_timesteps=10,
-            use_kv_cache=True, use_cuda_graph=True, precision="bf16"))
+            use_kv_cache=True, use_cuda_graph=False, precision="bf16", backend="eager",
+            tensorrt_batch_size=1, tensorrt_engine_dir=None))
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"runtime.yaml"
             p.write_text("num_inference_timesteps: 4\nuse_kv_cache: false\nuse_cuda_graph: false\n")

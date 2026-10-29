@@ -899,7 +899,7 @@ def _load_policy_from_config_dict(
 
     policy = policy_cls(policy_config)
     policy = policy.to(device)
-    load_model(policy, os.path.join(checkpoint_dir, "model.safetensors"), strict=False, device=device)
+    load_model(policy, os.path.join(checkpoint_dir, "model.safetensors"), strict=True, device=device)
     return policy
 
 
@@ -1262,6 +1262,7 @@ def _build_onnx_runtime_metadata(
         "supervision_key": str(getattr(policy, "supervision_key", None) or getattr(policy, "state_key", "")),
         "state_dim": int(tuple(obs_meta[state_key]["shape"])[0]) if state_key and state_key in obs_meta else None,
         "num_inference_timesteps": num_inference_timesteps,
+        "flow_type": getattr(policy, "flow_type", "fm"),
         "num_timestep_buckets": int(getattr(policy, "num_timestep_buckets", 0)),
         "noise_trajectory_shape": [1, int(getattr(policy, "horizon", 0)), int(getattr(policy, "action_dim", 0))],
         "static_joint_mask": bool(getattr(policy, "static_joint_mask", torch.zeros(1)).any().item())
@@ -2378,27 +2379,10 @@ class PolicyExportWrapper(torch.nn.Module):
         )
         action_mask = policy.action_mask.expand(batch_size, -1, -1).to(device=device)
 
-        noisy_action = noise_trajectory.to(device=device, dtype=dtype)
-        noisy_action = policy._zero_static_joints(noisy_action)
-        state_mask = ~action_mask
-        num_steps = int(policy.num_inference_timesteps)
-        dt = 1.0 / num_steps
-        for t in range(num_steps):
-            t_discretized = int(t / float(num_steps) * policy.num_timestep_buckets)
-            timesteps = torch.full(
-                size=(batch_size,),
-                fill_value=t_discretized,
-                device=device,
-            )
-            noisy_action[state_mask] = state_traj[state_mask]
-            noisy_action = policy._zero_static_joints(noisy_action)
-            state_action_traj = policy.state_adaptor(noisy_action)
-            pred_velocity = policy.model(state_action_traj, timesteps, scene_cond)
-            pred_velocity = policy._zero_static_joints(pred_velocity)
-            noisy_action = noisy_action + dt * pred_velocity
-            noisy_action = policy._zero_static_joints(noisy_action)
-
-        noisy_action[state_mask] = state_traj[state_mask]
+        noisy_action, _ = policy.conditional_sample(
+            scene_cond, state_traj, action_mask, use_kv_cache=False,
+            noise_trajectory=noise_trajectory,
+        )
         action_pred = policy.normalizer[self.supervision_key].unnormalize(noisy_action[..., :action_dim])
         start = n_obs_steps
         end = start + int(policy.n_action_steps)
