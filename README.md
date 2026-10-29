@@ -174,7 +174,9 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
   四卡入口 scripts/eval/eval_robotwin.sh，默认新输出根为
   /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1。
   根目录仅 result.json、videos/ 和 logs/；JSON 实时更新成功率及逐集结果。
-  专家选种与模型评测是两个独立步骤，Base/B2 使用同一份验证 seedlist。
+  新任务首次评测会自动先筛选100个专家成功种子，按任务+场景配置持久保存；
+  后续 Base/B2 与其他方法复用同一份，跨进程/机器并发不会重复筛选。
+  也可提前运行 scripts/eval/check_expert.sh，具体共享位置与导出方法见平台 README。
 - 严格重载主模型/EMA并检查默认 Graph 推理：
   PYTHONPATH=src .venv/bin/python tools/check_policy_checkpoint.py /absolute/checkpoint。
 - Graph 测速 tools/benchmark_inference_cuda_graph.py 必须显式传

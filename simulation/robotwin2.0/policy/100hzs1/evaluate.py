@@ -42,6 +42,8 @@ def seed_provenance(path, task, task_config, require_verified=False):
     path = Path(path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     metadata_path = path.with_suffix(".expert.json")
+    if not metadata_path.exists() and path.name=="seeds.txt":
+        metadata_path = path.with_name("summary.json")
     if not metadata_path.exists():
         if require_verified:
             raise FileNotFoundError(
@@ -65,6 +67,8 @@ def seed_provenance(path, task, task_config, require_verified=False):
         "seed_list": str(path),
         "metadata": str(metadata_path),
         "count": len(values),
+        "scene_sha256": metadata.get("scene_identity", {}).get("sha256"),
+        "seed_set_scope": metadata.get("seed_set_scope", "verified_task_profile_list"),
     }
 
 
@@ -93,6 +97,7 @@ def main():
         type=Path,
         help="Override the task/profile's expert-verified default seed list",
     )
+    parser.add_argument("--seed-root", type=Path)
     parser.add_argument("--task", default="beat_block_hammer")
     parser.add_argument("--task-config", default="demo_clean")
     parser.add_argument("--nfe", type=int, default=None)
@@ -118,11 +123,27 @@ def main():
         or any(g < 0 for g in args.gpus)
     ):
         raise ValueError("Invalid nfe or GPU IDs")
+    args.checkpoint = args.checkpoint.resolve()
+    if not args.dry_run and not (args.checkpoint/"model.safetensors").is_file():
+        raise FileNotFoundError(args.checkpoint)
     explicit_seed_list = args.seed_list is not None
     if args.seed_list is None:
-        args.seed_list = (
-            ROOT / "task_config/seedlists" / f"{args.task}_{args.task_config}.txt"
-        )
+        registry = _import_module("100hzs1.evaluation.seeds").SeedRegistry(ROOT,args.seed_root)
+        found = registry.resolve(args.task,args.task_config)
+        if args.dry_run and found is None:
+            print(json.dumps(dict(task=args.task,task_config=args.task_config,
+                seed_status="needs_expert_screening",seed_set_size=100,
+                seed_registry=str(registry.directory(args.task,args.task_config))),indent=2))
+            return
+        if not args.dry_run:
+            # The preparer locks by task/profile and imports existing verified lists without GPU work.
+            env = dict(os.environ,CUDA_VISIBLE_DEVICES=str(args.gpus[0]),GPU_ID=str(args.gpus[0]),
+                       KRAKEN_EGL_DEVICE=str(args.gpus[0]))
+            command = [sys.executable,str(ROOT/"script/check_expert.py"),"--task",args.task,
+                       "--task-config",args.task_config,"--seed-root",str(registry.root)]
+            subprocess.run(command,cwd=ROOT,env=env,check=True)
+            found = registry.get(args.task,args.task_config)
+        args.seed_list = found[0]
     args.seed_list = args.seed_list.resolve()
     seed_info = seed_provenance(
         args.seed_list,

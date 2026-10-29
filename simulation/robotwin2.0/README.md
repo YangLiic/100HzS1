@@ -65,46 +65,44 @@ cd ../..
 必须输出正确的环境路径、Torch 版本、`render: true` 和 `[240,320,4]`。
 无窗口渲染由 `headless.sh` 设置 NVIDIA EGL/Vulkan；缺驱动库应修复主机或容器配置。
 
-## 4. 先用专家筛选场景种子
+## 4. 一次筛选，所有模型共用
 
-独立入口不加载 100HzS1 checkpoint，按 seed 递增运行专家。只有
-`plan_success` 和任务 `check_success()` 都通过才接受；
-每个候选最多3次，取最先通过的100个，不根据 Base/B2 的表现挑选。
+默认按 task + task-config 锁定一份100个专家成功的 scene seed，独立于
+模型、backbone、checkpoint、采样步数和输出目录。新任务第一次评测会先自动调用
+check expert；已有列表直接复用，不为 Base/B2 分别选种子。
 
-```bash
-GPU_ID=0 bash scripts/eval/check_expert.sh \
-  --task blocks_ranking_rgb --task-config demo_clean \
-  --count 100 --start-seed 100000 --max-candidates 2000 \
-  --output /absolute/path/to/expert_check_run
-# 中断后同一命令加 --resume；代码和场景配置必须保持一致。
-```
+也可提前准备：
 
-脚本位于 `script/check_expert.py`，与评测共用 `script/expert_check.py` 的专家判定。
-普通规划/任务失败或不稳定场景会尝试下一候选；环境、CUDA 等非场景错误直接报错。
-每个候选完成后原子保存 `state.json`，其中含逐次检查结果；
-`seeds.partial.txt` 仅供查看进度。凑齐目标数量才生成 `seeds.txt`、
-`summary.json` 和 `EXPERT_SEEDS_COMPLETED`，未完成的列表不能用于正式对照。
+~~~bash
+bash scripts/eval/check_expert.sh --task adjust_bottle
+~~~
 
-将完整结果发布为任务的默认列表：
+默认共享目录为
+/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/seed_registry/<task>/<profile>/set/，
+其中 seeds.txt、summary.json 写完后，原子发布 COMMITTED.json 标记。S1_SEED_ROOT 或 --seed-root
+可指定其他共享位置；比较方法应使用同一位置。
 
-```bash
-test -f /absolute/path/to/expert_check_run/EXPERT_SEEDS_COMPLETED
-cp /absolute/path/to/expert_check_run/seeds.txt \
-  simulation/robotwin2.0/task_config/seedlists/blocks_ranking_rgb_demo_clean.txt
-cp /absolute/path/to/expert_check_run/summary.json \
-  simulation/robotwin2.0/task_config/seedlists/blocks_ranking_rgb_demo_clean.expert.json
-```
+- 只有专家规划与任务成功均通过才接受 seed；发布时严格检查100个唯一整数和 SHA256。
+- 多机器同时准备同一任务时只有一个筛选者，其余等待并复用同一结果。
+- start-seed、attempts 等筛选参数只用于首次创建；已有100种子不会因此变更。
+- 已发布列表不被自动重选、追加或覆盖；核心场景、机器人和相机代码/配置的摘要变化会明确拒绝混用。
+  跨机器比较还应保持相同资产与仿真依赖版本。
+- 仓库已有的验证列表会被原样导入共享目录，保持原来的种子和顺序，不重新筛选。
+- 每次模型 rollout 仍要独立执行。共享的是种子/场景定义，不是其他模型的结果；
+  物理仿真不承诺逐位一致，复检瞬时失败只重试原 seed，不偷偷换成别的 seed。
+- --dry-run 不筛选、不写共享目录、不启动 GPU。--seed-list 是显式自定义覆盖，结果会记录其 SHA。
 
-Base 与 B2 都使用这同一份列表。默认评测会校验 `.expert.json` 中的任务、
-配置、数量和 seed 文件 SHA256，并把它记录到评测 manifest。
-评测每集仍会复核专家；固定 seed 检查失败则停止，不替换种子。
-其他任务先生成并发布对应的 `任务名_配置名.txt` 和 `.expert.json`。
-显式 `--seed-list` 可指定自有列表；无验证摘要时 manifest 标记为未预筛选。
+要把新任务的固定列表随 Git 分发到另一台没有共享盘的机器：
 
-本仓库 `blocks_ranking_rgb/demo_clean` 默认表已于2026-10-28实际检查：
-100个候选全部通过，保存100个 seed（100000–100099），编号与原候选表相同，
-现在附带专家验证摘要。完整逐候选记录位于
-`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/expert_seeds/blocks_ranking_rgb_demo_clean_100_20261028_v1/state.json`。
+~~~bash
+bash scripts/eval/check_expert.sh --task adjust_bottle --publish
+~~~
+
+这会导出 task_config/seedlists/<task>_<profile>.txt 和 .expert.json；
+只复用已锁定列表，拒绝覆盖成另一套 seed。随后提交这两份文件。
+--output 可另外保存筛选诊断；小于100集的检查必须显式 --output，不会注册为公共100集列表。
+筛选中断会保留 build/state.json，正常重试从已处理候选后继续；异常退出遗留的锁会明确报错，
+不会为了继续而生成一份不同列表。
 
 ## 5. 四卡评测与实时结果
 
@@ -119,8 +117,8 @@ bash scripts/eval/eval_robotwin.sh \
 ~~~
 
 单集验证改成 --gpus 0 --episodes 1。--dry-run 只显示配置与分组。
-默认 seedlist 为 task_config/seedlists/<task>_<profile>.txt，必须配套专家验证摘要；
-Base/B2 使用同一份列表。--seed-list 可显式指定另一份固定列表。
+默认先准备/读取上一节的共享种子注册表；仓库随附的专家列表会原样导入。
+Base/B2 使用同一份100种子。--seed-list 可显式指定另一份列表，其 SHA 会记录在结果中。
 
 默认输出：
 

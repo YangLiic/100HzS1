@@ -32,14 +32,15 @@ def parser():
     p.add_argument("--start-seed", type=int, default=100000)
     p.add_argument("--max-candidates", type=int, default=2000)
     p.add_argument("--attempts", type=int, default=3)
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--output", type=Path)
+    p.add_argument("--seed-root", type=Path)
+    p.add_argument("--publish", action="store_true")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     return p
 
 
-def main():
-    args = parser().parse_args()
+def screen(args):
     if (
         args.count < 1
         or args.start_seed < 0
@@ -181,6 +182,49 @@ def main():
     write_json(output / "summary.json", summary)
     atomic_write(output / "EXPERT_SEEDS_COMPLETED", summary["seed_sha256"] + "\n")
     print("EXPERT_SEEDS_COMPLETED " + json.dumps(summary), flush=True)
+    return output / "seeds.txt", summary
+
+
+def main():
+    from importlib import import_module
+    registry_class = import_module("100hzs1.evaluation.seeds").SeedRegistry
+    args = parser().parse_args()
+    if args.count != 100:
+        if args.output is None:
+            raise ValueError("A diagnostic count other than 100 requires --output")
+        if args.publish:
+            raise ValueError("Only a complete 100-seed set can be published")
+        return screen(args)
+    registry = registry_class(ROOT,args.seed_root)
+    if args.dry_run:
+        found = registry.resolve(args.task,args.task_config)
+        print(json.dumps(dict(task=args.task,task_config=args.task_config,count=100,
+            action="reuse" if found else "select_and_lock",
+            seed_list=str(found[0]) if found else None,
+            registry=str(registry.directory(args.task,args.task_config))),indent=2))
+        return
+    def select(build):
+        from copy import copy
+        options = copy(args)
+        options.output = args.output or build
+        if (options.output/"EXPERT_SEEDS_COMPLETED").exists():
+            return options.output/"seeds.txt", json.loads((options.output/"summary.json").read_text())
+        options.resume = (options.output/"state.json").exists()
+        return screen(options)
+    path, info = registry.ensure(args.task,args.task_config,select)
+    if args.output is not None and args.output.resolve() != path.parent:
+        args.output.mkdir(parents=True,exist_ok=True)
+        for name, data in [("seeds.txt",path.read_bytes()),("summary.json",(json.dumps(info,indent=2)+"\n").encode())]:
+            target = args.output/name
+            if target.exists() and name=="seeds.txt" and target.read_bytes()!=data:
+                raise FileExistsError("Output contains a different seed set")
+            if not target.exists():
+                target.write_bytes(data)
+        (args.output/"EXPERT_SEEDS_COMPLETED").write_text(info["seed_sha256"]+"\n")
+    if args.publish:
+        registry.export(args.task,args.task_config)
+    print("EXPERT_SEEDS_READY "+json.dumps(dict(task=args.task,task_config=args.task_config,
+        count=100,seed_list=str(path),seed_sha256=info["seed_sha256"])),flush=True)
 
 
 if __name__ == "__main__":
