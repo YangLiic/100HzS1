@@ -28,8 +28,8 @@ bucket scaling. Image conditions are fixed with
 respect to flow time. They are encoded once; their trainable adapters still
 receive gradients through the separate optimization forward pass.
 
-Only MeanFlow instantiates `model.r_embedder`; its embedding is added to the
-existing time token, preserving positional shapes. Primitive attention is used
+Only MeanFlow instantiates `model.r_embedder`; the default `tau_token` path adds
+its embedding to the existing time token, preserving positional shapes. Primitive attention is used
 only for the detached JVP pass and original attention flags are restored before
 the parameter-gradient forward. Guidance is disabled (`guidance_scale: 1.0`;
 other values explicitly rejected), and there is no Dispersive Loss. The default
@@ -40,6 +40,39 @@ used for each sample's MSE. `loss_type: mse` is also available.
 Logging separates `meanflow_mse_equal_time` / `meanflow_mse_interval` and their
 adaptive losses, and records velocity, JVP and correction RMS. Empty subsets
 report zero; inspect `equal_time_ratio` to distinguish absent supervision.
+
+### Time injection architecture
+
+`model.time_injection` accepts `tau_token` (default) or `tau_AdaRMS`. Missing
+checkpoint fields resolve to `tau_token`, including original FM and MeanFlow
+weights. The switch changes the network architecture: it is **not** a runtime
+inference option, and weights trained with one value cannot be strictly loaded
+or resumed using the other. The resume and checkpoint initialization paths
+reject mismatches. Existing checkpoint directories are not modified.
+
+`tau_AdaRMS` separately embeds continuous `t` and `r` and sums them into `c`.
+Only MeanFlow has `r`; standard FM keeps its existing discrete time convention.
+New MeanFlow AdaRMS requires `meanflow.time_embed_scale: 1.0` (the default for
+this architecture), while the old token-mode missing-scale semantics remain
+unchanged. The common state adaptor encodes the observed prefix and future
+actions; a full-width `Linear(2D,D) -> GELU -> Linear(D,D)` fuses `[action,c]`
+for every future token. Prefix tokens skip this fusion. No time token is added;
+the position embedding keeps the original state/action positions.
+
+Each DiT block has independent full-width `D -> 3D` projections for the three
+pre-norms. Each produces time-dependent scale, shift, and an unconstrained
+residual gate: `x + gate * sublayer(RMSNorm(x)*(1+scale)+shift)`. Gates start at
+1, scale/shift at 0, and projection weights at 0, retaining an ungated residual
+path at initialization. The output RMSNorm has a separate `D -> 2D` projection
+for scale/shift (no output gate). All time-dependent paths are inside the
+function differentiated by MeanFlow's JVP. For 8 layers and width 2048 this
+full gated variant adds about 323 million parameters to the token-mode action
+head. It requires a newly trained checkpoint and its success/latency remain to
+be measured; the separate PixArt-inspired shared design is not implemented.
+
+Example B2 recipe:
+`configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_adarms_3v_8gpu_L4.yaml`.
+It uses a separate output directory and does not start training by itself.
 
 The initial v1 runs did not learn reliable one-step interval prediction. Their
 finite outputs and strict reload checks establish execution, not convergence.

@@ -288,6 +288,54 @@ class Block(nn.Module):
         return x
 
 
+class AdaRMSBlock(Block):
+    """S1 block with independent time-conditioned scale, shift and residual gate.
+
+    The inherited attention/FFN modules and their ordering are unchanged. Each
+    sublayer has its own full-width modulation projection; condition vectors
+    are shared across sequence positions, not across sublayers or blocks.
+    """
+
+    def __init__(self, hidden_size, num_heads, self_attn_first=True):
+        super().__init__(hidden_size, num_heads, self_attn_first)
+        self.modulations = nn.ModuleList([
+            nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 3 * hidden_size))
+            for _ in range(3)
+        ])
+
+    def initialize_modulations(self):
+        # Start with the original ungated residual form, while allowing the
+        # time-dependent scale, shift and gate to be learned independently.
+        for modulation in self.modulations:
+            linear = modulation[1]
+            nn.init.zeros_(linear.weight)
+            nn.init.zeros_(linear.bias)
+            with torch.no_grad():
+                linear.bias[2 * linear.out_features // 3:].fill_(1)
+
+    @staticmethod
+    def _apply_modulation(x, norm, parameters):
+        scale, shift, gate = parameters.chunk(3, dim=-1)
+        return norm(x) * (1 + scale[:, None, :]) + shift[:, None, :], gate[:, None, :]
+
+    def forward(self, x, c, mask=None, kv_cache=None, time_condition=None):
+        if time_condition is None:
+            raise ValueError("AdaRMSBlock requires a time condition")
+        if self.self_attn_first:
+            attention1 = self.attn
+            attention2 = functools.partial(self.cross_attn, c=c, mask=mask, kv_cache=kv_cache)
+        else:
+            attention1 = functools.partial(self.cross_attn, c=c, mask=mask, kv_cache=kv_cache)
+            attention2 = self.attn
+        for norm, layer, modulation in zip(
+            (self.norm1, self.norm2, self.norm3),
+            (attention1, attention2, self.ffn), self.modulations,
+        ):
+            normalized, gate = self._apply_modulation(x, norm, modulation(time_condition))
+            x = x + gate * layer(normalized)
+        return x
+
+
 #################################################################################
 #                           Large DiT Block.                                    #
 #################################################################################

@@ -366,6 +366,8 @@ def train(args, logger):
         saved_config = load_checkpoint_config(args.checkpoint_dir)
         if saved_config.get("flow_type", "fm") != config.flow_type:
             raise ValueError("checkpoint_dir must use the same flow_type; FM-to-MeanFlow migration is not a resume")
+        if saved_config.get("time_injection", "tau_token") != config.time_injection:
+            raise ValueError("checkpoint_dir cannot change time_injection; the new architecture requires its own weights")
         load_model(policy_model, os.path.join(args.checkpoint_dir, "model.safetensors"), strict=True)
     # policy_model = load_policy("checkpoints/dp_baseline/test", use_ckp_code = True)
     policy_model.to(accelerator.device)
@@ -536,6 +538,8 @@ def train(args, logger):
             resumed_config = load_checkpoint_config(os.path.join(args.output_dir, path))
             if resumed_config.get("flow_type", "fm") != config.flow_type:
                 raise ValueError("resume_from_checkpoint cannot change flow_type")
+            if resumed_config.get("time_injection", "tau_token") != config.time_injection:
+                raise ValueError("resume_from_checkpoint cannot change time_injection")
             try:
                 # torch>=2.6 defaults weights_only=True and accelerate's load() sets it
                 # explicitly, breaking on omegaconf objects in saved states.

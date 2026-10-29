@@ -104,6 +104,9 @@ model:
     noise_s: 0.999
   scene_adaptor: mlp2x_gelu
   state_adaptor: mlp3x_gelu
+  # tau_token preserves legacy FM/MeanFlow checkpoint structure.
+  # tau_AdaRMS uses action-time fusion plus full per-sublayer modulation/gates.
+  time_injection: tau_token
   hidden_size: 2048
   depth: 8 # 28
   num_heads: 32 # 32

@@ -48,6 +48,7 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     supervision_key: Optional[str] = None
     self_attn_first: bool = True
     flow_type: str = "fm"
+    time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
     
 
@@ -68,8 +69,16 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
         self.flow_type = kwargs.get("flow_type", "fm")
         if self.flow_type not in {"fm", "meanflow"}:
             raise ValueError("flow_type must be fm or meanflow")
+        self.time_injection = kwargs.get("time_injection", "tau_token")
+        if self.time_injection not in {"tau_token", "tau_AdaRMS"}:
+            raise ValueError("time_injection must be tau_token or tau_AdaRMS")
         if self.flow_type == "meanflow":
             self.meanflow = validate_options(kwargs.get("meanflow"))
+            if self.time_injection == "tau_AdaRMS":
+                if self.meanflow["time_embed_scale"] is None:
+                    self.meanflow["time_embed_scale"] = 1.0
+                elif self.meanflow["time_embed_scale"] != 1.0:
+                    raise ValueError("tau_AdaRMS MeanFlow requires continuous time_embed_scale 1.0")
     
     @classmethod
     def from_customed_yaml(cls, yaml_path: str):
@@ -109,6 +118,8 @@ def create_dit_model(
         scene_cond_len=scene_cond_len,
         scene_pos_embed_config=scene_pos_embed_config,
         flow_type=getattr(config, "flow_type", "fm"),
+        time_injection=getattr(config, "time_injection", "tau_token"),
+        n_obs_steps=config.n_obs_steps,
     )
 
 class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
@@ -177,6 +188,8 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             scene_cond_len=scene_cond_len,
             scene_pos_embed_config=scene_pos_embed_config,
             flow_type=self.flow_type,
+            time_injection=config.time_injection,
+            n_obs_steps=n_obs_steps,
         )
 
         self.scene_adaptor = self.build_condition_adapter(

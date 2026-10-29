@@ -17,7 +17,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from .blocks import FinalLayer, Block, TimestepEmbedder, get_1d_sincos_pos_embed_from_grid, get_multimodal_cond_pos_embed
+from .blocks import AdaRMSBlock, FinalLayer, Block, TimestepEmbedder, get_1d_sincos_pos_embed_from_grid, get_multimodal_cond_pos_embed
 
 
 class DiT(nn.Module):
@@ -37,8 +37,16 @@ class DiT(nn.Module):
         dtype=torch.bfloat16,
         use_final_layer=True,
         flow_type="fm",
+        time_injection="tau_token",
+        n_obs_steps=1,
     ):
         super().__init__()
+        if time_injection not in {"tau_token", "tau_AdaRMS"}:
+            raise ValueError("time_injection must be tau_token or tau_AdaRMS")
+        if time_injection == "tau_AdaRMS" and not 0 <= n_obs_steps <= horizon:
+            raise ValueError("n_obs_steps must be between 0 and horizon")
+        self.time_injection = time_injection
+        self.n_obs_steps = n_obs_steps
         self.use_final_layer = use_final_layer
         self.horizon = horizon
         self.hidden_size = hidden_size
@@ -49,19 +57,30 @@ class DiT(nn.Module):
         self.t_embedder = TimestepEmbedder(hidden_size, dtype=dtype)
         self.r_embedder = TimestepEmbedder(hidden_size, dtype=dtype) if flow_type == "meanflow" else None
         
-        # We will use trainable sin-cos embeddings
-        # [timestep; state; action]
+        # Trainable sin/cos positions: token mode includes a leading time slot;
+        # AdaRMS mode contains only the observed prefix and future actions.
         self.x_pos_embed = nn.Parameter(
-            torch.zeros(1, horizon+1, hidden_size))
+            torch.zeros(1, horizon + (time_injection == "tau_token"), hidden_size))
         # Image conditions
         self.scene_cond_pos_embed = nn.Parameter(
             torch.zeros(1, scene_cond_len, hidden_size))
         
+        block_class = Block if time_injection == "tau_token" else AdaRMSBlock
         self.blocks = nn.ModuleList([
-            Block(hidden_size, num_heads, self_attn_first) for _ in range(depth)
+            block_class(hidden_size, num_heads, self_attn_first) for _ in range(depth)
         ])
         if self.use_final_layer:
             self.final_layer = FinalLayer(hidden_size, output_dim)
+        if time_injection == "tau_AdaRMS":
+            self.action_time_fusion = nn.Sequential(
+                nn.Linear(2 * hidden_size, hidden_size),
+                nn.GELU(approximate="tanh"),
+                nn.Linear(hidden_size, hidden_size),
+            )
+            if self.use_final_layer:
+                self.final_modulation = nn.Sequential(
+                    nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size)
+                )
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -81,6 +100,9 @@ class DiT(nn.Module):
                 ('action', self.horizon),
             ])
         )
+        if self.time_injection == "tau_AdaRMS":
+            # Preserve the old state/action position slots, omitting the time token.
+            x_pos_embed = x_pos_embed[1:]
         self.x_pos_embed.data.copy_(torch.from_numpy(x_pos_embed).float().unsqueeze(0))
 
         scene_cond_pos_embed = get_multimodal_cond_pos_embed(
@@ -97,6 +119,12 @@ class DiT(nn.Module):
         if self.r_embedder is not None:
             nn.init.normal_(self.r_embedder.mlp[0].weight, std=0.02)
             nn.init.normal_(self.r_embedder.mlp[2].weight, std=0.02)
+        if self.time_injection == "tau_AdaRMS":
+            for block in self.blocks:
+                block.initialize_modulations()
+            if self.use_final_layer:
+                nn.init.zeros_(self.final_modulation[1].weight)
+                nn.init.zeros_(self.final_modulation[1].bias)
         
         # Initialize the final layer: zero-out the final linear layer
         if self.use_final_layer:
@@ -114,19 +142,14 @@ class DiT(nn.Module):
         return tuple(block.cross_attn.prepare_kv(scene_c) for block in self.blocks)
 
     def forward(self, x, t, scene_c, scene_mask=None, kv_cache=None, r=None):
-        """
-        Forward pass of RDT.
-        
-        x: (B, T, D), state + action token sequence, T = horizon + 1,
-            dimension D is assumed to be the same as the hidden size.
-        freq: (B,), a scalar indicating control frequency.
-        t: (B,) or (1,), diffusion timesteps.
-        lang_c: (B, L_lang, D) or None, language condition tokens (variable length),
-            dimension D is assumed to be the same as the hidden size.
-        img_c: (B, L_img, D) or None, image condition tokens (fixed length),
-            dimension D is assumed to be the same as the hidden size.
-        lang_mask: (B, L_lang) or None, language condition mask (True for valid).
-        img_mask: (B, L_img) or None, image condition mask (True for valid).
+        """Predict all horizon slots; the policy masks the observed prefix.
+
+        x: [B, horizon, D], already encoded state and noisy action tokens.
+        t/r: [B] or [1]; MeanFlow supplies continuous t and r, FM supplies t.
+        scene_c: [B, scene_cond_len, D], or None when using a K/V cache.
+        scene_mask: valid visual condition positions, if provided.
+        Token mode adds one time slot internally and discards it at output;
+        AdaRMS mode uses horizon slots throughout the network.
         """
         t = self.t_embedder(t)
         if self.r_embedder is not None:
@@ -135,11 +158,16 @@ class DiT(nn.Module):
             t = t + self.r_embedder(r)
         elif r is not None:
             raise ValueError("FM DiT does not accept MeanFlow target time r")
-        t = t.unsqueeze(1)
-        # Append timestep to the input tokens
         if t.shape[0] == 1:
-            t = t.expand(x.shape[0], -1, -1)
-        x = torch.cat([t, x], dim=1)               # (B, T, D)
+            t = t.expand(x.shape[0], -1)
+        if self.time_injection == "tau_token":
+            # Preserve the legacy sequence and module path exactly.
+            x = torch.cat([t.unsqueeze(1), x], dim=1)
+        else:
+            prefix, action = x[:, :self.n_obs_steps], x[:, self.n_obs_steps:]
+            action_time = t[:, None, :].expand(-1, action.shape[1], -1)
+            action = self.action_time_fusion(torch.cat([action, action_time], dim=-1))
+            x = torch.cat([prefix, action], dim=1)
         
         # Add multimodal position embeddings
         x = x + self.x_pos_embed
@@ -153,14 +181,23 @@ class DiT(nn.Module):
 
         # Forward pass
         for i, block in enumerate(self.blocks):
-            if kv_cache is None:
+            if self.time_injection == "tau_AdaRMS":
+                cache = None if kv_cache is None else kv_cache[i]
+                x = block(x, scene_c, scene_mask, kv_cache=cache, time_condition=t)
+            elif kv_cache is None:
                 x = block(x, scene_c, scene_mask)       # (B, T+1, D)
             else:
                 x = block(x, scene_c, scene_mask, kv_cache=kv_cache[i])
-        # Inject the language condition at the final layer
+        # Final normalization and velocity decoder.
         if self.use_final_layer:
-            x = self.final_layer(x)                         # (B, T+1, out_channels)
+            if self.time_injection == "tau_AdaRMS":
+                scale, shift = self.final_modulation(t).chunk(2, dim=-1)
+                x = self.final_layer.norm_final(x) * (1 + scale[:, None, :]) + shift[:, None, :]
+                x = self.final_layer.ffn_final(x)
+            else:
+                x = self.final_layer(x)                     # (B, T+1, out_channels)
 
-        # Only preserve the action tokens
+        # Drop only the optional time token. State slots remain here and are
+        # excluded from the direct action loss/sampling output by the policy.
         x = x[:, -self.horizon:]
         return x
