@@ -163,6 +163,7 @@ def save_state_comparison(
     save_dir: Path,
     chunk_size: int,
     state_names: list = None,
+    filename: str = "state_comparison.png",
 ):
     """OpenPI's trajectory panel, without its additional MAE figure."""
     import os
@@ -200,7 +201,7 @@ def save_state_comparison(
         axes[i].set_visible(False)
 
     plt.tight_layout()
-    path1 = save_dir / "state_comparison.png"
+    path1 = save_dir / filename
     plt.savefig(path1, dpi=150, bbox_inches="tight")
     plt.close()
 
@@ -225,244 +226,121 @@ def use_fp32(model):
     model.model.t_embedder.dtype = torch.float32
 
 
+def training_dataset_options(checkpoint, config_path=None):
+    """Read the actual resolved training recipe, including checkpoint subdirectories."""
+    from omegaconf import OmegaConf
+    OmegaConf.register_new_resolver("eval", eval, replace=True)
+    candidates = ([Path(config_path)] if config_path else [
+        checkpoint / "resolved_config.yaml", checkpoint.parent / "resolved_config.yaml",
+        checkpoint / "hydra/.hydra/config.yaml"])
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        raise FileNotFoundError("Need the run's resolved_config.yaml or --training-config to identify train/test episodes")
+    cfg = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
+    return cfg["train_dataset"]
+
+
+def choose_episodes(root, dataset_options, requested=None):
+    """Reuse the training dataset's exact split/filter/downsampling logic, without decoding video."""
+    from types import SimpleNamespace
+    Dataset = _import_module("100hzs1.datasets.dataset").S1Dataset
+    Metadata = _import_module("lerobot.datasets.lerobot_dataset").LeRobotDatasetMetadata
+    metadata = Metadata(repo_id=dataset_options.get("repo_id", str(root)), root=root)
+    holder = SimpleNamespace(dataset_meta=metadata,
+        val_ratio=dataset_options.get("val_ratio", .02),
+        seed=dataset_options.get("seed", 42),
+        task_list=dataset_options.get("task_list"),
+        task_index_list=dataset_options.get("task_index_list"),
+        black_index=dataset_options.get("black_index"),
+        max_train_episodes=dataset_options.get("max_train_episodes", dataset_options.get("demo")))
+    train = Dataset._setup_train_val_split(holder).tolist()
+    test = np.flatnonzero(holder.val_mask).tolist() if holder.val_mask is not None else []
+    if requested is None:
+        if not train or not test:
+            raise ValueError("Need both training and held-out episodes")
+        return [("train", train[0]), ("test", test[0])]
+    if len(set(requested)) != len(requested):
+        raise ValueError("Duplicate episode selection")
+    result = []
+    for episode in requested:
+        if episode not in train and episode not in test:
+            raise ValueError(f"Episode {episode} is outside this run's train/test split")
+        result.append(("train" if episode in train else "test", episode))
+    return result
+
+
+def checkpoint_name(checkpoint):
+    name = checkpoint.name
+    if name.startswith("checkpoint-") or name == "ema":
+        name = checkpoint.parent.name + "_" + name
+    return name
+
+
+def figure_path(output, checkpoint, split, episode):
+    return output / f"{checkpoint_name(checkpoint)}_{split}_ep{episode:06d}.png"
+
+
 def run(args):
     options = load_inference_options(args.inference_config, {
         "num_inference_timesteps": args.nfe, "precision": args.precision,
         "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
     })
-    args.nfe = options["num_inference_timesteps"]
-    args.precision = options["precision"]
-    args.cuda_graph = options["use_cuda_graph"]
-    args.kv_cache = options["use_kv_cache"]
+    args.checkpoint = args.checkpoint.resolve()
     root = args.dataset
     if not (root / "meta/info.json").is_file():
         root = root / args.task
     info = json.loads((root / "meta/info.json").read_text())
     if info.get("robotwin_action_space") != "absolute_joint14":
         raise ValueError("Dataset must declare robotwin_action_space=absolute_joint14")
-    if args.output.exists() and any(args.output.iterdir()):
-        raise FileExistsError(f"Use a fresh output directory: {args.output}")
+    episodes = choose_episodes(root, training_dataset_options(args.checkpoint, args.training_config), args.episodes)
+    paths = [figure_path(args.output, args.checkpoint, split, ep) for split, ep in episodes]
+    if any(p.exists() for p in paths):
+        raise FileExistsError("An output image already exists; select another output directory")
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.dry_run:
+        print(json.dumps(dict(checkpoint=str(args.checkpoint), dataset=str(root),
+            inference=options, source_color=args.source_color,
+            episodes=[dict(split=split, episode=ep, image=str(path))
+                      for (split, ep), path in zip(episodes, paths)]), indent=2))
+        return
     torch.set_num_threads(4)
     model = load_policy(str(args.checkpoint), device="cpu", inference_config=args.inference_config).eval()
     configure_policy_inference(model, args.inference_config, options)
-    load_model(model, str(args.checkpoint / "model.safetensors"), strict=True)
     model.to(args.device)
-    if args.precision == "fp32":
-        use_fp32(model)  # Convert stored tensors AND the timestep embedding dtype.
-    model.num_inference_timesteps = args.nfe
     if model.action_key != "state" or model.supervision_key not in {"action", "state"}:
-        raise ValueError("Only absolute joint14 state/action policies are supported")
+        raise ValueError("Only absolute joint14 policies are supported")
     keys = list(model.obs_encoder.rgb_key)
     if set(keys) - CAMERAS.keys():
         raise ValueError(f"Unmapped cameras: {keys}")
-    chunk, n_obs, n_image = (
-        model.n_action_steps,
-        model.n_obs_steps,
-        model.n_image_obs_steps,
-    )
+    chunk, n_obs, n_image = model.n_action_steps, model.n_obs_steps, model.n_image_obs_steps
     if chunk != model.horizon - n_obs:
-        raise ValueError("Expected full future chunk: horizon - n_obs_steps")
-    report = {
-        "code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "checkpoint_config_sha256": hashlib.sha256(
-            (args.checkpoint / "config.json").read_bytes()
-        ).hexdigest(),
-        "checkpoint_weights_size": (args.checkpoint / "model.safetensors")
-        .stat()
-        .st_size,
-        "constant_velocity_available": n_obs >= 2,
-        "checkpoint": str(args.checkpoint),
-        "dataset": str(root),
-        "nfe": args.nfe,
-        "precision": args.precision,
-        "use_cuda_graph": args.cuda_graph,
-        "use_kv_cache": args.kv_cache,
-        "inference_config": str(args.inference_config) if args.inference_config else "packaged defaults",
-        "cuda_graph_scope": "visual backbone",
-        "source_color": args.source_color,
-        "n_obs_steps": n_obs,
-        "n_image_obs_steps": n_image,
-        "action_chunk": chunk,
-        "horizon": model.horizon,
-        "image_keys": keys,
-        "seed": args.seed,
-        "alignment": "states[a-n_obs:a], images[a-n_image:a], GT actions[a:a+chunk]",
-        "original_recipe_validation_episode": 4,
-        "episodes": {},
-    }
+        raise ValueError("Expected full future chunk")
+    report = []
     names = info["features"]["action"]["names"]
-    all_pred, all_gt, all_hold, all_velocity = [], [], [], []
-    ablation_cases = []
-    for episode in args.episodes:
-        location = dict(
-            episode_index=episode, episode_chunk=episode // info["chunks_size"]
-        )
+    for (split, episode), path in zip(episodes, paths):
+        location = dict(episode_index=episode, episode_chunk=episode // info["chunks_size"])
         length = pq.read_metadata(root / info["data_path"].format(**location)).num_rows
-        anchors = args.anchors or list(
-            range(n_obs, length - chunk + 1, args.stride or chunk)
-        )
+        anchors = args.anchors or list(range(n_obs, length - chunk + 1, args.stride or chunk))
         if not anchors:
             raise ValueError(f"No complete windows in episode {episode}")
-        state, action, images, windows = load_episode(
-            root, info, episode, keys, anchors, n_obs, n_image, chunk
-        )
+        state, action, images, windows = load_episode(root, info, episode, keys, anchors, n_obs, n_image, chunk)
         predictions = []
-        for index, window in enumerate(windows):
-            obs = build_observation(
-                state, images, window, keys, args.device, args.source_color
-            )
-            noise_seed = (args.seed + episode * 1_000_003 + int(anchors[index])) % (
-                2**31
-            )
-            predictions.append(predict(model, obs, noise_seed, args.precision,
-                                       use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache))
-            if index % 25 == 0:
-                print(
-                    f"episode={episode} chunks={index + 1}/{len(anchors)}", flush=True
-                )
+        for anchor, window in zip(anchors, windows):
+            obs = build_observation(state, images, window, keys, args.device, args.source_color)
+            noise_seed = (args.seed + episode * 1_000_003 + int(anchor)) % (2**31)
+            predictions.append(predict(model, obs, noise_seed, options["precision"],
+                use_cuda_graph=options["use_cuda_graph"], use_kv_cache=options["use_kv_cache"]))
         predictions = np.stack(predictions)
-        target = np.stack([action[w[2]] for w in windows])
-        hold = np.stack([np.repeat(state[w[0][-1:]], chunk, axis=0) for w in windows])
-        if n_obs >= 2:
-            delta = np.stack([state[w[0][-1]] - state[w[0][-2]] for w in windows])
-            velocity = hold + delta[:, None] * np.arange(1, chunk + 1)[None, :, None]
-        else:
-            velocity = hold.copy()
-        result = {
-            "chunks": len(anchors),
-            "frames": length,
-            "state_action_max_abs_diff": float(np.max(np.abs(state - action))),
-            "prediction": metrics(predictions, target),
-            "hold_last": metrics(hold, target),
-            "constant_velocity": metrics(velocity, target),
-        }
-        moving = (
-            np.max(np.abs(target[..., JOINTS] - hold[..., JOINTS]), axis=(1, 2)) > 0.01
-        )
-        result["moving_chunks"] = int(moving.sum())
-        if moving.any():
-            result["moving_only"] = {
-                name: metrics(value[moving], target[moving])
-                for name, value in [
-                    ("prediction", predictions),
-                    ("hold_last", hold),
-                    ("constant_velocity", velocity),
-                ]
-            }
-        folder = args.output / f"episode_{episode:06d}"
-        folder.mkdir()
-        np.savez_compressed(
-            folder / "predictions.npz",
-            anchors=np.asarray(anchors),
-            prediction=predictions,
-            gt=target,
-            hold_last=hold,
-            constant_velocity=velocity,
-            input_state=np.stack([state[w[0]] for w in windows]),
-            image_indices=np.stack([w[1] for w in windows]),
-            state=state,
-            action=action,
-        )
-        save_plots(
-            folder,
-            episode,
-            state,
-            action,
-            anchors,
-            predictions,
-            names,
-            n_obs,
-            images,
-            keys,
-            args.source_color,
-            args.nfe,
-        )
-        (folder / "metrics.json").write_text(json.dumps(result, indent=2))
-        report["episodes"][str(episode)] = result
-        for group, value in zip(
-            [all_pred, all_gt, all_hold, all_velocity],
-            [predictions, target, hold, velocity],
-        ):
-            group.append(value)
-        if args.ablations:
-            for i in np.unique(
-                np.linspace(0, len(windows) - 1, min(4, len(windows)), dtype=int)
-            ):
-                ablation_cases.append(
-                    (
-                        episode,
-                        anchors[i],
-                        state,
-                        images,
-                        windows[i],
-                        windows[(i + len(windows) // 2) % len(windows)][1],
-                        predictions[i],
-                        target[i],
-                    )
-                )
-        print(json.dumps({"episode": episode, **result}), flush=True)
-    report["aggregate"] = {
-        name: metrics(np.concatenate(values), np.concatenate(all_gt))
-        for name, values in [
-            ("prediction", all_pred),
-            ("hold_last", all_hold),
-            ("constant_velocity", all_velocity),
-        ]
-    }
-    (args.output / "summary.json").write_text(json.dumps(report, indent=2))
-    if args.ablations:
-        # BF16 production model first; only cast to FP32 after the other variants are finished.
-        variants = ["black_images", "shuffle_images", "raw_color", "jpeg", "fp32"]
-        report["ablations"] = {}
-        for variant in variants:
-            if variant == "fp32":
-                use_fp32(model)
-            values, targets, deltas = [], [], []
-            for (
-                episode,
-                anchor,
-                state,
-                images,
-                window,
-                alternate,
-                reference,
-                target,
-            ) in ablation_cases:
-                obs = build_observation(
-                    state,
-                    images,
-                    window,
-                    keys,
-                    args.device,
-                    args.source_color,
-                    variant,
-                    alternate,
-                )
-                seed = (args.seed + episode * 1_000_003 + int(anchor)) % (2**31)
-                value = predict(
-                    model, obs, seed, "fp32" if variant == "fp32" else args.precision,
-                    use_cuda_graph=args.cuda_graph, use_kv_cache=args.kv_cache,
-                )
-                values.append(value)
-                targets.append(target)
-                deltas.append(value - reference)
-            report["ablations"][variant] = {
-                **metrics(np.stack(values), np.stack(targets)),
-                "prediction_change_rmse": float(
-                    np.sqrt(np.mean(np.stack(deltas) ** 2))
-                ),
-                "samples": len(values),
-            }
-        report["ablations"]["correct_reference"] = metrics(
-            np.stack([s[-2] for s in ablation_cases]),
-            np.stack([s[-1] for s in ablation_cases]),
-        )
-    (args.output / "summary.json").write_text(json.dumps(report, indent=2))
-    (args.output / "OPENLOOP_COMPLETED").write_text(
-        "Complete; this is not closed-loop success rate.\n"
-    )
-    print("OPENLOOP_COMPLETED " + json.dumps(report["aggregate"]), flush=True)
+        target = np.stack([action[window[2]] for window in windows])
+        # Exact same GT/predicted trajectory panel as the specified OpenPI plot.
+        save_state_comparison(target.reshape(-1, 14), predictions.reshape(-1, 14),
+                              args.output, chunk, state_names=names, filename=path.name)
+        result = dict(split=split, episode=episode, image=str(path), chunks=len(anchors),
+                      prediction=metrics(predictions, target))
+        report.append(result)
+        print("OPENLOOP_EPISODE " + json.dumps(result), flush=True)
+    print("OPENLOOP_COMPLETED " + json.dumps(report), flush=True)
+    return report
 
 
 def parser():
@@ -476,7 +354,10 @@ def parser():
         ),
     )
     p.add_argument("--task", default="beat_block_hammer")
-    p.add_argument("--episodes", type=int, nargs="+", default=[0, 4])
+    p.add_argument("--episodes", type=int, nargs="+", default=None,
+                   help="Default: first training and first held-out episode from this run")
+    p.add_argument("--training-config", type=Path, help="Resolved training YAML; otherwise inferred from checkpoint")
+    p.add_argument("--dry-run", action="store_true")
     p.add_argument(
         "--anchors",
         type=int,
@@ -484,7 +365,7 @@ def parser():
         help="First future action indices; default whole episode",
     )
     p.add_argument("--stride", type=int, help="Default action chunk length")
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--output", type=Path, default=Path("/DRoboticsAILab/users/licheng.yang/openloop_eval"))
     p.add_argument("--source-color", choices=["bgr", "rgb"], default="bgr")
     p.add_argument("--precision", choices=["bf16", "fp32"], default=None)
     p.add_argument("--inference-config", type=Path)
@@ -493,11 +374,6 @@ def parser():
     p.add_argument("--nfe", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="cuda:0")
-    p.add_argument(
-        "--ablations",
-        action="store_true",
-        help="Four sampled chunks per episode: image/precision tests",
-    )
     return p
 
 

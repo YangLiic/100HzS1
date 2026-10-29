@@ -3,6 +3,7 @@ from importlib import import_module as _import_module
 
 import argparse
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ DEFAULT_OUTPUT = Path("/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1")
 
 
 load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+records = _import_module("100hzs1.evaluation.records")
 
 def split_seeds(path, total, workers):
     seeds = [
@@ -67,24 +69,7 @@ def seed_provenance(path, task, task_config, require_verified=False):
 
 
 def merge_results(output, groups, gpus):
-    records = []
-    for gpu, expected in zip(gpus, groups):
-        part = output / f"gpu{gpu}"
-        if not (part / "EVALUATION_COMPLETED").is_file():
-            raise RuntimeError(f"GPU{gpu} did not complete")
-        result = json.loads((part / "result.json").read_text())
-        receipt = [int(x) for x in (part / "_eval_seeds.txt").read_text().splitlines()]
-        rows = result["results"]
-        if receipt != expected or [r["seed"] for r in rows] != expected:
-            raise RuntimeError(
-                f"GPU{gpu} seed coverage changed; refusing partial success rate"
-            )
-        if any(type(r["success"]) is not bool for r in rows):
-            raise ValueError("Every episode needs a boolean result")
-        records.extend(dict(row, gpu=gpu) for row in rows)
-    if len({r["seed"] for r in records}) != len(records):
-        raise ValueError("Overlapping seeds")
-    return sorted(records, key=lambda row: row["seed"])
+    return records.collect(output, groups, gpus, require_complete=True)[0]
 
 
 def terminate(process):
@@ -149,7 +134,7 @@ def main():
             DEFAULT_OUTPUT
             / args.task
             / args.checkpoint.name
-            / datetime.now().strftime("%Y%m%d-%H%M%S")
+            / datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d_%H-%M-%S")
         )
     args.output = args.output.resolve()
     groups = split_seeds(args.seed_list, args.episodes, len(args.gpus))
@@ -157,7 +142,7 @@ def main():
         "checkpoint": str(args.checkpoint),
         "task": args.task,
         "task_config": args.task_config,
-        "episodes": args.episodes,
+        "planned_episodes": args.episodes,
         "gpus": args.gpus,
         "seed_groups": groups,
         "expert_seed_provenance": seed_info,
@@ -178,108 +163,93 @@ def main():
         return
     if not (args.checkpoint / "model.safetensors").is_file():
         raise FileNotFoundError(args.checkpoint)
+    run_workers(args, manifest, groups)
+
+
+def run_workers(args, manifest, groups, worker_entry=None, interval=1):
+    """Only this controller writes result.json; each worker owns one journal."""
     args.output.mkdir(parents=True, exist_ok=True)
-    if (args.output / "manifest.json").exists():
+    if any(args.output.iterdir()):
         raise FileExistsError("Use a fresh output directory")
-    sources = [
-        Path(__file__),
-        ROOT / "script/eval_policy.py",
-        ROOT / "policy/100hzs1/deploy_policy.py",
-    ]
+    (args.output / "logs").mkdir()
+    (args.output / "videos").mkdir()
+    sources = [Path(__file__), ROOT / "script/eval_policy.py",
+               ROOT / "policy/100hzs1/deploy_policy.py", Path(records.__file__)]
     manifest["source_sha256"] = {
-        str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sources
-    }
-    (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    workers = []
-    handles = []
+        str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else "evaluation/records.py":
+            hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    manifest["started_at"] = records.now()
+    manifest["checkpoint_config_sha256"] = hashlib.sha256(
+        (args.checkpoint / "config.json").read_bytes()).hexdigest()
+    processes, handles = [], []
+    worker_entry = worker_entry or ROOT / "script/eval_policy.py"
 
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)
 
-    signal.signal(signal.SIGTERM, interrupted)
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGINT)}
+    records.snapshot(manifest, args.output, groups, args.gpus)
+    last_completed = -1
     try:
         for gpu, seeds in zip(args.gpus, groups):
-            part = args.output / f"gpu{gpu}"
-            part.mkdir()
-            seed_file = part / "seeds.txt"
-            seed_file.write_text("".join(f"{s}\n" for s in seeds))
-            env = dict(
-                os.environ,
-                CUDA_VISIBLE_DEVICES=str(gpu),
-                GPU_ID=str(gpu),
-                KRAKEN_EGL_DEVICE=str(gpu),
-                PYTHONUNBUFFERED="1",
-                S1_JPEG_ROUNDTRIP="1",
-            )
-            handle = (part / "worker.log").open("w")
+            env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu), GPU_ID=str(gpu),
+                       KRAKEN_EGL_DEVICE=str(gpu), PYTHONUNBUFFERED="1", S1_JPEG_ROUNDTRIP="1")
+            handle = (args.output / "logs" / f"gpu{gpu}.log").open("w")
             handles.append(handle)
-            cmd = [
-                sys.executable,
-                "-u",
-                str(ROOT / "script/eval_policy.py"),
-                "--checkpoint",
-                str(args.checkpoint),
-                "--output",
-                str(part),
-                "--seed-list",
-                str(seed_file),
-                "--episodes",
-                str(len(seeds)),
-                "--task",
-                args.task,
-                "--task-config",
-                args.task_config,
-                "--nfe",
-                str(args.nfe),
-            ]
-            cmd += [
-                "--cuda-graph" if args.cuda_graph else "--no-cuda-graph",
-                "--kv-cache" if args.kv_cache else "--no-kv-cache",
-                "--precision", args.precision,
-            ]
+            command = [sys.executable, "-u", str(worker_entry),
+                       "--checkpoint", str(args.checkpoint),
+                       "--output", str(args.output),
+                       "--journal", str(args.output / "logs" / f"gpu{gpu}.jsonl"),
+                       "--seeds", *map(str, seeds), "--task", args.task,
+                       "--task-config", args.task_config, "--nfe", str(args.nfe),
+                       "--cuda-graph" if args.cuda_graph else "--no-cuda-graph",
+                       "--kv-cache" if args.kv_cache else "--no-kv-cache",
+                       "--precision", args.precision]
             if args.inference_config:
-                cmd += ["--inference-config", str(args.inference_config.resolve())]
-            process = subprocess.Popen(
-                cmd,
-                cwd=ROOT,
-                env=env,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            workers.append(process)
-            print(
-                f"WORKER_STARTED gpu={gpu} episodes={len(seeds)} pid={process.pid}",
-                flush=True,
-            )
-        while any(p.poll() is None for p in workers):
-            if any(p.poll() not in (None, 0) for p in workers):
-                raise RuntimeError(
-                    "Evaluation worker failed; inspect per-GPU worker.log"
-                )
-            time.sleep(1)
-        if any(p.returncode != 0 for p in workers):
-            raise RuntimeError("Evaluation worker failed")
-        records = merge_results(args.output, groups, args.gpus)
-        result = dict(
-            manifest, results=records, successes=sum(r["success"] for r in records)
-        )
-        result["success_rate"] = result["successes"] / len(records)
-        (args.output / "result.json").write_text(json.dumps(result, indent=2))
-        (args.output / "_result.txt").write_text(
-            f"Success rate: {result['successes']}/{len(records)} = {result['success_rate']:.2%}\n"
-        )
-        (args.output / "EVALUATION_COMPLETED").touch()
-        print(
-            "EVALUATION_COMPLETED " + (args.output / "_result.txt").read_text().strip(),
-            flush=True,
-        )
+                command += ["--inference-config", str(args.inference_config.resolve())]
+            processes.append(subprocess.Popen(command, cwd=ROOT, env=env, stdout=handle,
+                                              stderr=subprocess.STDOUT, start_new_session=True))
+            print(f"WORKER_STARTED gpu={gpu} episodes={len(seeds)}", flush=True)
+        while True:
+            current = records.snapshot(manifest, args.output, groups, args.gpus)
+            if current["completed_episodes"] != last_completed:
+                rate = current["success_rate"]
+                rate_text = f"{rate:.1%}" if rate is not None else "pending"
+                print(f"PROGRESS {current['completed_episodes']}/{current['planned_episodes']} "
+                      f"successes={current['successes']} success_rate={rate_text} "
+                      "(completed episodes)", flush=True)
+                last_completed = current["completed_episodes"]
+            codes = [p.poll() for p in processes]
+            if any(code not in (None, 0) for code in codes):
+                raise RuntimeError("Evaluation worker failed; inspect logs/gpuN.log")
+            if all(code == 0 for code in codes):
+                break
+            time.sleep(interval)
+        result = records.snapshot(manifest, args.output, groups, args.gpus,
+                                  status="completed", final=True)
+        print(f"EVALUATION_COMPLETED successes={result['successes']}/"
+              f"{result['completed_episodes']} = {result['success_rate']:.2%}", flush=True)
+        return result
+    except BaseException as exc:
+        for process in processes:
+            terminate(process)
+        try:
+            records.snapshot(manifest, args.output, groups, args.gpus,
+                             status="interrupted" if isinstance(exc, (SystemExit, KeyboardInterrupt)) else "failed",
+                             error=exc)
+        except Exception:
+            # A corrupt journal must not erase the last valid progress snapshot.
+            current = json.loads((args.output / "result.json").read_text())
+            current.update(status="failed", error=str(exc), updated_at=records.now())
+            records.atomic_json(args.output / "result.json", current)
+        raise
     finally:
-        for process in workers:
+        for process in processes:
             terminate(process)
         for handle in handles:
             handle.close()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 if __name__ == "__main__":

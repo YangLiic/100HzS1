@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parents[1]
-sys.path[:0] = [str(ROOT / "policy"), str(ROOT), str(REPOSITORY / "src")]
+sys.path[:0] = [str(ROOT), str(REPOSITORY / "src")]
 os.chdir(ROOT)
 
 import numpy as np
@@ -24,6 +24,7 @@ from description.utils.generate_episode_instructions import (
 
 
 load_inference_options = _import_module("100hzs1.common.inference").load_inference_options
+records = _import_module("100hzs1.evaluation.records")
 
 def read_seeds(path, count):
     values = [
@@ -202,8 +203,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seed-list", type=Path, required=True)
-    parser.add_argument("--episodes", type=int, default=100)
+    parser.add_argument("--journal", type=Path, required=True)
+    parser.add_argument("--seeds", type=int, nargs="+", required=True)
     parser.add_argument("--task", default="beat_block_hammer")
     parser.add_argument("--task-config", default="demo_clean")
     parser.add_argument("--nfe", type=int, default=None)
@@ -220,58 +221,43 @@ def main():
     args.cuda_graph = options["use_cuda_graph"]
     args.kv_cache = options["use_kv_cache"]
     args.precision = options["precision"]
-    seeds = read_seeds(args.seed_list, args.episodes)
-    args.output.mkdir(parents=True, exist_ok=True)
-    if (args.output / "episodes.jsonl").exists():
-        raise FileExistsError("Use a fresh output directory")
+    seeds = args.seeds
+    if not seeds or len(seeds) != len(set(seeds)):
+        raise ValueError("Need distinct pinned seeds")
+    if args.journal.exists():
+        raise FileExistsError("Use a fresh journal")
+    args.journal.parent.mkdir(parents=True, exist_ok=True)
+    video_dir = args.output / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
     policy = _import_module("policy.100hzs1")
-
-    torch.set_num_threads(1)
-    model = policy.get_model({"ckpt_setting": str(args.checkpoint), "nfe": args.nfe,
-        "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
-        "precision": args.precision, "inference_config": args.inference_config})
-    (args.output / "runtime.json").write_text(
-        json.dumps(runtime_record(policy), indent=2)
-    )
-    kwargs, video_size = task_arguments(args.task, args.task_config, args.output)
-    kwargs["ckpt_setting"] = str(args.checkpoint)
-    environment = getattr(importlib.import_module(f"envs.{args.task}"), args.task)()
-    records = []
-    for index, seed in enumerate(seeds):
-        print(f"EPISODE_STARTED index={index + 1}/{len(seeds)} seed={seed}", flush=True)
-        record = run_episode(
-            environment, model, policy, seed, index, kwargs, video_size, args.output
-        )
-        records.append(record)
-        with (args.output / "episodes.jsonl").open("a") as handle:
-            handle.write(json.dumps(record) + "\n")
-        print(f"EPISODE_COMPLETED {json.dumps(record)}", flush=True)
-    (args.output / "_eval_log.txt").write_text(
-        "".join(
-            f"seed: {r['seed']}, result: {'Success' if r['success'] else 'Fail'}\n"
-            for r in records
-        )
-    )
-    (args.output / "_eval_seeds.txt").write_text("".join(f"{seed}\n" for seed in seeds))
-    result = {
-        "checkpoint": str(args.checkpoint),
-        "task": args.task,
-        "use_cuda_graph": model.use_cuda_graph,
-        "use_kv_cache": model.use_kv_cache,
-        "precision": model.precision,
-        "cuda_graph_scope": "visual_backbone",
-        "nfe": args.nfe,
-        "episodes": len(records),
-        "successes": sum(r["success"] for r in records),
-        "results": records,
-    }
-    result["success_rate"] = result["successes"] / len(records)
-    (args.output / "result.json").write_text(json.dumps(result, indent=2))
-    (args.output / "EVALUATION_COMPLETED").touch()
-    print(
-        f"EVALUATION_COMPLETED successes={result['successes']}/{len(records)}",
-        flush=True,
-    )
+    try:
+        torch.set_num_threads(1)
+        model = policy.get_model({"ckpt_setting": str(args.checkpoint), "nfe": args.nfe,
+            "use_cuda_graph": args.cuda_graph, "use_kv_cache": args.kv_cache,
+            "precision": args.precision, "inference_config": args.inference_config})
+        records.append_event(args.journal, "runtime", runtime=runtime_record(policy))
+        kwargs, video_size = task_arguments(args.task, args.task_config, video_dir)
+        kwargs["ckpt_setting"] = str(args.checkpoint)
+        environment = getattr(importlib.import_module(f"envs.{args.task}"), args.task)()
+        for index, seed in enumerate(seeds):
+            print(f"EPISODE_STARTED index={index+1}/{len(seeds)} seed={seed}", flush=True)
+            records.append_event(args.journal, "started", seed=seed)
+            record = run_episode(environment, model, policy, seed, index, kwargs, video_size, video_dir)
+            if kwargs.get("eval_video_log"):
+                record["video"] = f"videos/seed_{seed}.mp4"
+            record["completed_at"] = records.now()
+            records.append_event(args.journal, "episode", record=record)
+            print(f"EPISODE_COMPLETED {json.dumps(record)}", flush=True)
+        graph = model.policy.obs_encoder.scene_encoder._backbone_cuda_graph
+        graph_stats = dict(graph_captures=graph.captures if graph else 0,
+                           graph_replays=graph.replays if graph else 0)
+        if model.use_cuda_graph and not (graph_stats["graph_captures"] and graph_stats["graph_replays"]):
+            raise RuntimeError("Requested CUDA Graph did not replay")
+        records.append_event(args.journal, "completed", graph=graph_stats)
+        print("WORKER_COMPLETED", flush=True)
+    except BaseException as exc:
+        records.append_event(args.journal, "failed", error=f"{type(exc).__name__}: {exc}")
+        raise
 
 
 if __name__ == "__main__":

@@ -106,67 +106,63 @@ Base 与 B2 都使用这同一份列表。默认评测会校验 `.expert.json` �
 现在附带专家验证摘要。完整逐候选记录位于
 `/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/expert_seeds/blocks_ranking_rgb_demo_clean_100_20261028_v1/state.json`。
 
-## 5. 单集验证与四卡评测
+## 5. 四卡评测与实时结果
 
-统一使用仓库根目录的 `scripts/eval/eval_robotwin.sh`，默认 GPU0–3、
-100 个固定种子，每卡25集。执行链路：
+统一入口 scripts/eval/eval_robotwin.sh。默认 GPU0–3，每卡25集，共100个已通过专家的固定 seed；
+模型从 checkpoint 配置自动重建主干。10步均匀 Euler、K/V缓存、视觉 CUDA Graph、
+BF16 默认值统一来自 configs/100hzs1_infer/default.yaml。在线 SAPIEN RGB 不翻转。
 
-| 文件 | 职责 |
+~~~bash
+bash scripts/eval/eval_robotwin.sh \
+  --checkpoint /absolute/path/to/checkpoint \
+  --task beat_block_hammer --gpus 0 1 2 3 --episodes 100
+~~~
+
+单集验证改成 --gpus 0 --episodes 1。--dry-run 只显示配置与分组。
+默认 seedlist 为 task_config/seedlists/<task>_<profile>.txt，必须配套专家验证摘要；
+Base/B2 使用同一份列表。--seed-list 可显式指定另一份固定列表。
+
+默认输出：
+
+~~~text
+/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/<task>/<权重目录名>/<时间>/
+├── result.json
+├── videos/seed_<seed>.mp4
+└── logs/
+    ├── gpu0.log ... gpu3.log
+    └── gpu0.jsonl ... gpu3.jsonl
+~~~
+
+根目录只有一个结果 JSON、视频目录和日志目录，不再生成各卡结果子树、
+重复 TXT、manifest、seed 副本或完成标记。配置、种子及 SHA、运行环境、代码摘要
+直接放进 result.json；journal 保存在 logs，供多进程汇总与故障排查。
+
+result.json 在运行中约每秒原子更新，随时可打开：
+
+| 字段 | 含义 |
 |---|---|
-| `scripts/eval/eval_robotwin.sh` | 选择仿真环境、设置无窗口运行参数、启动评测 |
-| `policy/100hzs1/evaluate.py`（本平台目录内） | 拆分固定种子，每卡启动一个进程，严格合并结果 |
-| `script/eval_policy.py`（本平台目录内） | 单卡逐集仿真，在同一进程直接调用 100HzS1 |
+| status | running / completed / failed / interrupted |
+| planned_episodes / completed_episodes | 计划数 / 已完成数 |
+| successes / failures | 已完成集数中的成功 / 失败数 |
+| success_rate | successes / completed_episodes；尚未完成任何一集时为 null |
+| results | 所有已完成 episode 的 seed、GPU、成功与否、动作数、推理次数和视频 |
+| workers | 每卡当前 seed、完成数、状态及实际 Graph 捕获/重放次数 |
 
-从 100HzS1 仓库根目录运行：
+只有各 worker 成功退出、固定种子覆盖完整且视频存在，才写 status=completed。
+失败或中断会保留已完成结果；运行中成功率不应当作最终100集成功率。
+不记录单次推理延迟。
 
-```bash
-# 单卡单集先导；省略 --nfe 时从共享推理 YAML 读取，默认10步。
-bash scripts/eval/eval_robotwin.sh \
-  --checkpoint /absolute/path/to/checkpoint \
-  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/my_pilot \
-  --task blocks_ranking_rgb --gpus 0 --episodes 1
+实时查看简洁汇总和最近 episode：
 
-# 四卡各25集；此例显式使用10步均匀 Euler。
-bash scripts/eval/eval_robotwin.sh \
-  --checkpoint /absolute/path/to/checkpoint \
-  --output /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/my_eval_100 \
-  --task blocks_ranking_rgb --gpus 0 1 2 3 --episodes 100 --nfe 10
-```
+~~~bash
+python3 scripts/eval/watch_robotwin.py /absolute/evaluation/result.json
+# 只打印一次
+python3 scripts/eval/watch_robotwin.py /absolute/evaluation/result.json --once
+~~~
 
-加 `--dry-run` 只打印配置、种子分组和输出目录，不启动 GPU 评测。
-默认种子文件按任务选择 `task_config/seedlists/<task>_<profile>.txt`，缺少时先运行专家筛选；
-同条件对比应使用相同 checkpoint 选择规则、种子列表和 NFE。
+## 6. Beat Block Hammer
 
-默认任务 `beat_block_hammer/demo_clean`，默认十步均匀推理；可用 `--task`、
-`--task-config`、`--seed-list`、`--nfe` 指定。Base/EfficientViT 根据
-checkpoint 的 `config.json` 恢复结构，使用同一入口。
-在线 SAPIEN 图像已经是 RGB，不翻通道；保持 JPEG roundtrip 与已有部署一致。
-每集每次推理的噪声固定为 `(seed * 1_000_003 + infer_index) % 2**31`。
-
-默认结果根目录为 `/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1`。
-每次使用新输出目录；各卡保存日志、逐集 JSON、视频及环境来源记录。
-只有固定种子全部跑完并严格合并后才生成根目录 `result.json`、
-`_result.txt` 和 `EVALUATION_COMPLETED`。场景检查失败不会偷偷换种子。
-不采集推理延迟。单集完成证明链路可运行，成功率应使用完整固定种子评测。
-
-### Click Alarmclock 成对评测
-
-任务名为 click_alarmclock，使用 demo_clean。独立专家筛选从 100000 开始，
-116 个候选中选出首批 100 个专家同时规划成功、任务成功的种子；
-固定列表为 task_config/seedlists/click_alarmclock_demo_clean.txt，
-同名 .expert.json 校验任务、数量及 SHA。Base 与 B2 native 共用这份列表。
-
-训练使用 configs/100hzs1_train/click_alarmclock_{dinov3cnnb,efficientvit_b2_native}_3v_8gpu_L4.yaml，
-单帧观测、horizon24、23 个未来绝对关节动作。评测显式传 --task click_alarmclock
---task-config demo_clean --nfe 10 --gpus 0 1 2 3 --episodes 100，分别指定各自最终主模型。
-在线 RGB 不翻转，不能用旧 blocks_ranking_rgb 种子列表代替。
-
-无法找到专家接近姿态时，100HzS1 自有任务脚本标记 plan_success=False 并返回，
-由筛选器按专家失败处理；不修改有效场景动作或成功判据。
-
-推理默认开启视觉主干 CUDA Graph 和 K/V 缓存。评测日志记录实际 graph_captures/
-graph_replays；请求 Graph 但没有 replay 时终止，不能将回退结果冒充 Graph。
-先测 Graph；不自动追加 eager 对照，是否测试由用户决定。
-
-推理默认统一读取 configs/100hzs1_infer/default.yaml：10步、KV=true、CUDA Graph=true、bf16。
-可用 --inference-config 指定 YAML，显式命令行开关优先。CUDA Graph 只覆盖视觉主干。
+beat_block_hammer_demo_clean 的100个固定种子已由独立专家筛选：
+118个候选，18个拒绝。列表及验证摘要提交在 task_config/seedlists。
+正式比较先用最终主模型跑训练/留出验证各一集开环，再使用相同100个种子四卡闭环。
+训练和推理均不修改其他项目的代码；资产可使用共享目录的软链接。

@@ -18,6 +18,34 @@ class OpenLoopTest(unittest.TestCase):
         self.assertIsNone(module.parser().parse_args(required).cuda_graph)
         self.assertFalse(module.parser().parse_args(required + ['--no-cuda-graph']).cuda_graph)
 
+    def test_default_flat_png_and_checkpoint_identity(self):
+        args=module.parser().parse_args(["--checkpoint","/weights/model"])
+        self.assertEqual(str(args.output),"/DRoboticsAILab/users/licheng.yang/openloop_eval")
+        self.assertIsNone(args.episodes)
+        path=module.figure_path(args.output,Path("/weights/recipe/checkpoint-10000"),"test",4)
+        self.assertEqual(path.name,"recipe_checkpoint-10000_test_ep000004.png")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            module.save_state_comparison(np.zeros((46,14)),np.ones((46,14)),root,23,filename=path.name)
+            self.assertEqual([p.name for p in root.iterdir()],[path.name])
+
+    def test_default_episodes_match_actual_train_validation_split(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        metadata=SimpleNamespace(total_episodes=50,tasks={0:"task"},
+            episodes={i:dict(tasks=["task"]) for i in range(50)})
+        original=module._import_module
+        def imports(name):
+            if name=="lerobot.datasets.lerobot_dataset":
+                return SimpleNamespace(LeRobotDatasetMetadata=lambda **_:metadata)
+            return original(name)
+        with patch.object(module,"_import_module",side_effect=imports):
+            selected=module.choose_episodes(Path("/unused"),dict(seed=42,val_ratio=.02,max_train_episodes=50))
+            self.assertEqual(selected,[("train",0),("test",4)])
+            with self.assertRaises(ValueError):
+                module.choose_episodes(Path("/unused"),dict(seed=42,val_ratio=.02),[4,4])
+
     def test_no_future_observations_and_exact_future_gt(self):
         state, image, action = module.window_indices(30, 3, 1, 5, 100)
         np.testing.assert_array_equal(state, [27, 28, 29])

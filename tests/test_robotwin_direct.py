@@ -110,22 +110,18 @@ class TestRobotwinDirect(unittest.TestCase):
             seeds.write_text("".join(f"{s}\n" for s in range(100000, 100100)))
             groups = launcher.split_seeds(seeds, 100, 4)
             self.assertEqual([len(g) for g in groups], [25] * 4)
+            records = _import_module("100hzs1.evaluation.records")
+            (root / "logs").mkdir()
             for gpu, group in enumerate(groups):
-                part = root / f"gpu{gpu}"
-                part.mkdir()
-                (part / "EVALUATION_COMPLETED").touch()
-                (part / "_eval_seeds.txt").write_text("".join(f"{s}\n" for s in group))
-                (part / "result.json").write_text(
-                    json.dumps(
-                        {"results": [{"seed": s, "success": False} for s in group]}
-                    )
-                )
-            self.assertEqual(
-                len(launcher.merge_results(root, groups, [0, 1, 2, 3])), 100
-            )
-            (root / "gpu2/result.json").write_text(json.dumps({"results": []}))
+                journal = root / "logs" / f"gpu{gpu}.jsonl"
+                for seed in group:
+                    records.append_event(journal, "episode", record=dict(seed=seed, success=False))
+                records.append_event(journal, "completed")
+            self.assertEqual(len(launcher.merge_results(root, groups, [0, 1, 2, 3])), 100)
+            (root / "logs/gpu2.jsonl").write_text("")
             with self.assertRaises(RuntimeError):
                 launcher.merge_results(root, groups, [0, 1, 2, 3])
+
 
 
 if __name__ == "__main__":

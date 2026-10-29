@@ -168,11 +168,12 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
 ## 5. 开环、仿真与验证
 
 - [开环评测](scripts/openloop_eval/README.md)：直接调用策略，离线 BGR→RGB；
-  每集只绘制指定 OpenPI 风格的各关节 GT/Pred 轨迹，另存原始预测与指标。
+  训练/留出验证各一集，每集只存一张 OpenPI 风格 GT/Pred 图，默认输出 openloop_eval。
 - [RoboTwin 搭建与评测](simulation/robotwin2.0/README.md)：自有代码与环境，
   可复用资产软链接；仿真与推理同一进程、同一环境，无 TCP/ZMQ 服务。
   四卡入口 scripts/eval/eval_robotwin.sh，默认新输出根为
   /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1。
+  根目录仅 result.json、videos/ 和 logs/；JSON 实时更新成功率及逐集结果。
   专家选种与模型评测是两个独立步骤，Base/B2 使用同一份验证 seedlist。
 - 严格重载主模型/EMA并检查默认 Graph 推理：
   PYTHONPATH=src .venv/bin/python tools/check_policy_checkpoint.py /absolute/checkpoint。
