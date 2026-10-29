@@ -30,7 +30,8 @@ class MeanFlowTests(unittest.TestCase):
         self.assertEqual(Config(action_key='state').state_key, 'state')
         self.assertEqual(Config(state_key='state', flow_type='meanflow').meanflow['equal_time_ratio'], .5)
         for value in ({'guidance_scale': 2}, {'equal_time_ratio': 1.1},
-                      {'loss_eps': 0}, {'time_std': 0}, {'dispersive_weight': .5}):
+                      {'loss_eps': 0}, {'time_std': 0}, {'dispersive_weight': .5},
+                      {'time_embed_scale': 0}, {'time_embed_scale': float('nan')}):
             with self.assertRaises(ValueError): mf.validate_options(value)
         with self.assertRaises(ValueError): Config(flow_type='unknown')
 
@@ -62,6 +63,9 @@ class MeanFlowTests(unittest.TestCase):
         result['loss'].backward()
         expected_grad = ((2 * error * z * mask).flatten(1).sum(1) / denominator).mean()
         torch.testing.assert_close(scale.grad, expected_grad)
+        sample_mse = (error.square() * mask).flatten(1).sum(1) / denominator
+        torch.testing.assert_close(result['meanflow_mse_interval'], sample_mse[0])
+        torch.testing.assert_close(result['meanflow_mse_equal_time'], sample_mse[1])
 
     def test_actual_dit_jvp_finite_difference_and_trainable_conditions(self):
         torch.manual_seed(5)
@@ -155,6 +159,37 @@ class MeanFlowTests(unittest.TestCase):
         expected = ((fn(state, t, t)-v).square()*mask).sum()/mask.sum()
         torch.testing.assert_close(result['loss'], expected)
         self.assertEqual(float(result['meanflow_correction_rms']), 0)
+        self.assertEqual(float(result['meanflow_mse_interval']), 0)
+        torch.testing.assert_close(result['meanflow_mse_equal_time'], expected.detach())
+
+    def test_saved_time_scale_changes_sampler_inputs_without_reinterpreting_v1(self):
+        class Oracle(nn.Module):
+            def forward(self, x, t, scene, r=None, kv_cache=None):
+                self.times.append((t.clone(), r.clone()))
+                return x / (t[:, None, None] / self.time_scale)
+        class Sampler(nn.Module):
+            conditional_sample = Policy.conditional_sample
+            _sample_meanflow = Policy._sample_meanflow
+            def _zero_static_joints(self, x): return x
+        for options, expected_scale in ((None, 1000), ({}, 1000),
+                                         (mf.validate_options(), 1000),
+                                         (mf.validate_options({'time_embed_scale': 1.0}), 1)):
+            sampler = Sampler().eval()
+            sampler.flow_type = 'meanflow'; sampler.horizon = 4; sampler.action_dim = 3
+            sampler.num_inference_timesteps = 4; sampler.num_timestep_buckets = 1000
+            sampler.meanflow_options = options
+            sampler.state_adaptor = nn.Identity(); sampler.model = Oracle()
+            sampler.model.times = []; sampler.model.time_scale = expected_scale
+            mask = torch.ones(2,4,3,dtype=torch.bool); mask[:,0] = False
+            state = torch.ones(2,4,3)*2
+            with torch.no_grad():
+                result, _ = sampler.conditional_sample(torch.empty(2,2,3),state,mask,
+                    use_kv_cache=False,noise_trajectory=torch.ones_like(state))
+            torch.testing.assert_close(result[:,1:],torch.zeros_like(result[:,1:]))
+            torch.testing.assert_close(result[:,0],state[:,0])
+            for i,(t,r) in enumerate(sampler.model.times):
+                torch.testing.assert_close(t,torch.full((2,),expected_scale*(1-i/4)))
+                torch.testing.assert_close(r,torch.full((2,),expected_scale*(1-(i+1)/4)))
 
     def test_checkpoint_runtime_precedence(self):
         config = {'flow_type': 'meanflow', 'inference': {'num_inference_timesteps': 1}}

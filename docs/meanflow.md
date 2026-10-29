@@ -19,8 +19,12 @@ NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 bash scripts/train/train.sh \
 MeanFlow uses z_t=(1-t)*action+t*noise and v=noise-action, 0<=r<=t<=1.
 It regresses u toward stopgrad(v-(t-r)*JVP(u;(v,1,0))). Observed state tokens
 and inactive joints are fixed; their JVP tangents are zero. JVP includes the
-raw-action adapter and continuous float time embeddings (scaled by the saved
-num_train_timesteps; never integer-quantized). Image conditions are fixed with
+raw-action adapter and continuous float time embeddings. New training YAMLs
+save `meanflow.time_embed_scale: 1.0`, matching MP1's continuous time inputs.
+Missing/null scale preserves the v1 MeanFlow checkpoint convention, which used
+`num_train_timesteps` (1000). Both training and sampling use the saved scale;
+changing it on existing weights changes their meaning. FM keeps its original
+bucket scaling. Image conditions are fixed with
 respect to flow time. They are encoded once; their trainable adapters still
 receive gradients through the separate optimization forward pass.
 
@@ -33,6 +37,14 @@ other values explicitly rejected), and there is no Dispersive Loss. The default
 supervision and half to interval supervision in the same model. Adaptive L2
 matches the MP1 recipe: gamma=0.5, epsilon=0.001, with active future dimensions
 used for each sample's MSE. `loss_type: mse` is also available.
+Logging separates `meanflow_mse_equal_time` / `meanflow_mse_interval` and their
+adaptive losses, and records velocity, JVP and correction RMS. Empty subsets
+report zero; inspect `equal_time_ratio` to distinguish absent supervision.
+
+The initial v1 runs did not learn reliable one-step interval prediction. Their
+finite outputs and strict reload checks establish execution, not convergence.
+The v2 YAMLs use independent output directories and the corrected time scale;
+they require small convergence validation before another formal training run.
 
 Inference reconstructs the algorithm from checkpoint metadata. Defaults resolve
 as algorithm defaults -> checkpoint inference -> selected runtime YAML -> CLI.

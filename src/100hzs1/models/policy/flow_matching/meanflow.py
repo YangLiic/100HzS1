@@ -11,7 +11,7 @@ import torch
 
 DEFAULTS = dict(time_distribution="logit_normal", time_mean=-0.4, time_std=1.0,
                 equal_time_ratio=0.5, loss_type="adaptive_l2", loss_gamma=0.5,
-                loss_eps=1e-3, guidance_scale=1.0)
+                loss_eps=1e-3, guidance_scale=1.0, time_embed_scale=None)
 
 
 def validate_options(options=None):
@@ -33,7 +33,18 @@ def validate_options(options=None):
         raise ValueError("MeanFlow requires loss_gamma in (0,1] and loss_eps > 0")
     if result["guidance_scale"] != 1.0:
         raise ValueError("Only pure MeanFlow is implemented: guidance_scale must be 1.0")
+    scale = result["time_embed_scale"]
+    if scale is not None and (
+        not isinstance(scale, (float, int)) or not math.isfinite(scale) or scale <= 0
+    ):
+        raise ValueError("MeanFlow time_embed_scale must be positive and finite, or null for legacy checkpoints")
     return result
+
+
+def time_embedding_scale(options, legacy_scale):
+    """Old MeanFlow weights used the FM bucket scale; new recipes save 1.0."""
+    scale = (options or {}).get("time_embed_scale")
+    return legacy_scale if scale is None else scale
 
 
 def sample_time_pairs(batch_size, device, options):
@@ -76,10 +87,19 @@ def objective(velocity_fn, z, t, r, velocity, mask, options, attention_module):
     per_sample = (error.square() * weights).flatten(1).sum(1) / denominator
     if options["loss_type"] == "adaptive_l2":
         adaptive = (per_sample.detach() + options["loss_eps"]).pow(-(1 - options["loss_gamma"]))
-        loss = (per_sample * adaptive).mean()
+        losses = per_sample * adaptive
     else:
-        loss = per_sample.mean()
+        losses = per_sample
+    loss = losses.mean()
+    equal = t == r
+    def subset_mean(values, selected):
+        return ((values.detach() * selected).sum() / selected.sum().clamp_min(1)).detach()
     return {"loss": loss, "meanflow_mse": per_sample.detach().mean(),
+            "meanflow_mse_equal_time": subset_mean(per_sample, equal),
+            "meanflow_mse_interval": subset_mean(per_sample, ~equal),
+            "meanflow_loss_equal_time": subset_mean(losses, equal),
+            "meanflow_loss_interval": subset_mean(losses, ~equal),
+            "meanflow_velocity_rms": ((velocity.float().square() * weights).sum() / weights.sum().clamp_min(1)).sqrt().detach(),
             "meanflow_jvp_rms": ((derivative.float().square() * weights).sum() / weights.sum().clamp_min(1)).sqrt().detach(),
             "meanflow_correction_rms": ((correction.square() * weights).sum() / weights.sum().clamp_min(1)).sqrt().detach(),
             "equal_time_ratio": (t == r).float().mean().detach()}

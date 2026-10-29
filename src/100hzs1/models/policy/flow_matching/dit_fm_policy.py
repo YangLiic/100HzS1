@@ -17,7 +17,7 @@ from ..flow_matching.common.normalizer import LinearNormalizer
 from ..flow_matching.common.module_attr_mixin import ModuleAttrMixin
 
 from ....common.inference import load_inference_options
-from .meanflow import validate_options, sample_time_pairs, objective
+from .meanflow import validate_options, sample_time_pairs, objective, time_embedding_scale
 
 import yaml
 import json
@@ -374,11 +374,12 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         if use_kv_cache and not self.training and not torch.is_grad_enabled():
             cache = self.model.prepare_kv_cache(scene_cond)
         steps = self.num_inference_timesteps
+        time_scale = time_embedding_scale(getattr(self, "meanflow_options", None), self.num_timestep_buckets)
         for index in range(steps):
             t = torch.full((value.shape[0],), 1 - index / steps, device=value.device, dtype=torch.float32)
             r = torch.full_like(t, 1 - (index + 1) / steps)
-            velocity = self.model(self.state_adaptor(value), t * self.num_timestep_buckets,
-                                  scene_cond, r=r * self.num_timestep_buckets, kv_cache=cache)
+            velocity = self.model(self.state_adaptor(value), t * time_scale,
+                                  scene_cond, r=r * time_scale, kv_cache=cache)
             value = value - velocity / steps
             value = self._zero_static_joints(torch.where(action_mask, value, state_traj))
             if return_flow:
@@ -514,12 +515,13 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         z = (1 - t[:, None, None]) * actions + t[:, None, None] * noise
         z = torch.where(action_mask, z, state)
         velocity = torch.where(active, noise - actions, torch.zeros_like(actions))
+        time_scale = time_embedding_scale(self.meanflow_options, self.num_timestep_buckets)
 
         def predict(raw, time, target_time):
             # Clamp in the differentiated function as well: fixed conditions have zero tangent.
             raw = torch.where(active, raw, torch.where(action_mask, torch.zeros_like(raw), state))
-            return self.model(self.state_adaptor(raw), time * self.num_timestep_buckets,
-                              scene, r=target_time * self.num_timestep_buckets)
+            return self.model(self.state_adaptor(raw), time * time_scale,
+                              scene, r=target_time * time_scale)
 
         return objective(predict, z, t, r, velocity, active, self.meanflow_options, self.model)
 
