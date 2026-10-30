@@ -1,0 +1,19 @@
+# @package _global_
+# Full-width time fusion and gated AdaRMS; a new architecture and output path.
+defaults:
+  - /100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_3v_8gpu_L4
+  - _self_
+
+model:
+  time_injection: tau_AdaRMS
+  meanflow:
+    time_embed_scale: 1.0
+    equal_time_ratio: 0.0
+    guidance_scale: 1.0
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b2_native_meanflow_adarms_eq0_3v_obs1_h24_8gpu_L4_20261029_v2
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

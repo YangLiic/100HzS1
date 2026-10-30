@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 usage() {
     cat <<'HELP'
 Usage: scripts/train/train.sh [config.yaml] [Hydra overrides...] [--dry-run]
-Default config: configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml
+Default config: configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml
 Default checkpoints: /DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1
 
 Environment:
@@ -21,17 +21,17 @@ Environment:
 
 Examples:
   NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
-    configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
+    configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
     train_dataset.path=/absolute/path/to/dataset_parent \
     train_dataset.task=adjust_bottle train_dataset.demo=100
-  scripts/train/train.sh configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
+  scripts/train/train.sh configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml \
     train_dataset.cache_to_ram=false --dry-run
 
 The LeRobot shared cache is managed by the 100HzS1 dataset itself.
 --dry-run prints the command and exits without starting training.
 HELP
 }
-CONFIG_PATH="${CONFIG_PATH:-configs/100hzs1_train/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4.yaml}"
 dry_run=false
 config_given=false
 hydra_overrides=()
@@ -62,6 +62,12 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
 fi
 config_dir="$(cd "$(dirname "$CONFIG_PATH")" && pwd)"
 config_name="$(basename "$CONFIG_PATH")"
+# Nested recipes still compose defaults from the shared training config root.
+train_config_root="$(cd "${REPO_ROOT}/configs/100hzs1_train" && pwd)"
+if [[ "$config_dir" == "$train_config_root/"* ]]; then
+    config_name="${config_dir#"$train_config_root"/}/$config_name"
+    config_dir="$train_config_root"
+fi
 ACCELERATE_CONFIG="${ACCELERATE_CONFIG:-${REPO_ROOT}/configs/100hzs1_accelerate_config.yaml}"
 if [[ ! -f "$ACCELERATE_CONFIG" ]]; then
     echo "Accelerate config does not exist: $ACCELERATE_CONFIG" >&2
