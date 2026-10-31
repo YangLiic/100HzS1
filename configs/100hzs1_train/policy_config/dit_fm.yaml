@@ -74,6 +74,10 @@ checkpointing_period: 10000
 val_period: 5000 # -1 to disable validation during training
 
 
+# Joint state/action normalization. Missing in legacy configs/checkpoints -> minmax.
+# Choices: minmax | minmax_expanded (1.25x range) | pi (q01/q99) | groot (q01/q99+clip).
+norm: minmax
+
 # ------------------------------- model config
 horizon: 24
 n_obs_steps: 1        # current state only; no observation history
@@ -82,6 +86,7 @@ obs_image_frame_indices: ${eval:'ListConfig(list(range(${n_obs_steps}-${n_image_
 n_action_steps: ${eval:'${horizon}-${n_obs_steps}'}
 n_latency_steps: 0
 model:
+  norm: ${norm}
   flow_type: fm
   meanflow:
     time_distribution: logit_normal

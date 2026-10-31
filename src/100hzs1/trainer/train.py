@@ -20,6 +20,7 @@ from tqdm.auto import tqdm
 from safetensors.torch import load_model
 
 from ..common.sampler import ResumableEpochSampler
+from ..common.norm import validate_norm
 from ..common.ema_model import EMAModel
 from ..common.checkpoint import validate_class_path
 
@@ -135,10 +136,11 @@ def apply_dataset_normalizer(args, train_dataset, policy_model, ema_policy_model
         return normalizer_source
 
     if normalizer_source == "dataset":
-        normalizer = train_dataset.get_normalizer()
+        norm = validate_norm(getattr(args, "norm", getattr(getattr(policy_model, "config", None), "norm", "minmax")))
+        normalizer = train_dataset.get_normalizer(norm=norm)
         policy_model.set_normalizer(normalizer)
         ema_policy_model.set_normalizer(normalizer)
-        logger.info("Loaded normalizer from train dataset.")
+        logger.info("Loaded normalizer from train dataset: norm=%s", norm)
     elif normalizer_source == "checkpoint":
         if not (hasattr(args, "checkpoint_dir") and args.checkpoint_dir):
             raise ValueError("normalizer_source=\"checkpoint\" requires checkpoint_dir.")
@@ -351,6 +353,7 @@ def train(args, logger):
 
     # Policy Model creation
     model_args = OmegaConf.to_container(args.model)
+    model_args["norm"] = validate_norm(getattr(args, "norm", model_args.get("norm", "minmax")))
     pkg_config = validate_class_path(model_args.pop('target_config'))
     pkg_policy = validate_class_path(model_args.pop('target_policy'))
     ConfigClass = hydra.utils.get_class(pkg_config)
@@ -368,6 +371,9 @@ def train(args, logger):
             raise ValueError("checkpoint_dir must use the same flow_type; FM-to-MeanFlow migration is not a resume")
         if saved_config.get("time_injection", "tau_token") != config.time_injection:
             raise ValueError("checkpoint_dir cannot change time_injection; the new architecture requires its own weights")
+        if getattr(args, "normalizer_source", "dataset") == "checkpoint":
+            if validate_norm(saved_config.get("norm", "minmax")) != config.norm:
+                raise ValueError("normalizer_source=checkpoint requires norm to match the checkpoint")
         load_model(policy_model, os.path.join(args.checkpoint_dir, "model.safetensors"), strict=True)
     # policy_model = load_policy("checkpoints/dp_baseline/test", use_ckp_code = True)
     policy_model.to(accelerator.device)
@@ -540,6 +546,8 @@ def train(args, logger):
                 raise ValueError("resume_from_checkpoint cannot change flow_type")
             if resumed_config.get("time_injection", "tau_token") != config.time_injection:
                 raise ValueError("resume_from_checkpoint cannot change time_injection")
+            if validate_norm(resumed_config.get("norm", "minmax")) != config.norm:
+                raise ValueError("resume_from_checkpoint cannot change norm")
             try:
                 # torch>=2.6 defaults weights_only=True and accelerate's load() sets it
                 # explicitly, breaking on omegaconf objects in saved states.

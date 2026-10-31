@@ -44,6 +44,7 @@ def hf_transform_parquet_images(items_dict):
     return items_dict
 
 from ..common.normalizer import LinearNormalizer
+from ..common.norm import normalizer_from_data, validate_norm
 from ..common.normalize_util import detect_static_dims_from_episode_ranges, get_image_range_normalizer, get_range_normalizer_from_stat, get_identity_normalizer_from_stat, robomimic_abs_action_only_dual_arm_normalizer_from_stat
 
 def downsample_mask(mask, max_n, seed=0):
@@ -481,8 +482,9 @@ class S1Dataset(LeRobotDataset):
         )
         return self._static_joint_info
 
-    def get_normalizer(self, **kwargs):
+    def get_normalizer(self, norm="minmax", **kwargs):
         """Create normalizer for all dataset features"""
+        norm = validate_norm(norm)
         normalizer = LinearNormalizer()
         
         # Add chunk-wise delta feature normalizers
@@ -502,7 +504,7 @@ class S1Dataset(LeRobotDataset):
                 continue
 
             feature = self.dataset_meta.features[key]
-            normalizer[self.feature_key_map.get(key, key)] = self._create_feature_normalizer(key, feature)
+            normalizer[self.feature_key_map.get(key, key)] = self._create_feature_normalizer(key, feature, norm=norm)
                 
         return normalizer
 
@@ -606,8 +608,12 @@ class S1Dataset(LeRobotDataset):
         }
         return get_identity_normalizer_from_stat(stat)
 
-    def _create_feature_normalizer(self, key, feature):
-        """Create appropriate normalizer based on feature type"""
+    def _create_feature_normalizer(self, key, feature, norm="minmax"):
+        """Create appropriate normalizer based on feature type."""
+        model_key = self.feature_key_map.get(key, key)
+        if norm != "minmax" and model_key in {"state", "action"}:
+            values = self.hf_dataset.select_columns([key])[:][key]
+            return normalizer_from_data(values, norm)
         if feature['dtype'] in ['image', 'video']:
             return get_image_range_normalizer()
         elif feature['dtype'] == 'string':

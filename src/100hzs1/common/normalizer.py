@@ -271,7 +271,16 @@ def _normalize(x, params, forward=True):
     x = x.reshape(-1, scale.shape[0])
     if forward:
         x = x * scale + offset
+        if 'clip_bounds' in params:
+            bounds = params['clip_bounds']
+            x = torch.clamp(x, min=bounds[0], max=bounds[1])
     else:
-        x = (x - offset) / scale
+        if 'clip_bounds' in params:
+            bounds = params['clip_bounds']
+            x = torch.clamp(x, min=bounds[0], max=bounds[1])
+        if 'inverse_scale' in params:
+            x = x * params['inverse_scale'] + params['inverse_offset']
+        else:
+            x = (x - offset) / scale
     x = x.reshape(src_shape)
     return x
