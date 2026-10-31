@@ -1,5 +1,6 @@
 import logging
 import time
+from collections.abc import Sequence
 from typing import Dict, List
 import torch
 from torch import Tensor, nn
@@ -31,6 +32,7 @@ class VisualEncoder(ModuleAttrMixin):
         # Persist the architecture choice even when the caller used defaults.
         if self.scene_encoder.backbone_target == "efficientvit":
             emvis_config["efficientvit_fusion_mode"] = self.scene_encoder.efficientvit_fusion_mode
+            emvis_config["compress_before_fusion"] = self.scene_encoder.compress_before_fusion
         # update emvis_config after initialization
         if 'load_backbone_pretrain' in emvis_config:
             emvis_config['load_backbone_pretrain'] = False
@@ -64,11 +66,11 @@ class VisualEncoder(ModuleAttrMixin):
 
 
 class EmVisRM(nn.Module):
-    """Spatial backbone -> channel alignment -> MultiViewFuser -> ResNetAdapter.
+    """Encode spatial tokens, optionally compress before fusion, then project.
 
-    DINOv3 ConvNeXt keeps its original state keys and pixel processing.
-    EfficientViT native mode fuses/compresses at the trunk width. Projected mode
-    is restored explicitly when loading checkpoints created before native support.
+    The default keeps fusion before ResNetAdapter for existing checkpoints.
+    EfficientViT native mode can instead move the adapter's spatial operations
+    before fusion while retaining its output projection after fusion.
     """
 
     def __init__(
@@ -94,6 +96,7 @@ class EmVisRM(nn.Module):
         mv_fuser_config: Dict = None,
         backbone_trainable: bool = False,
         efficientvit_fusion_mode: str = "native",
+        compress_before_fusion: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -102,6 +105,18 @@ class EmVisRM(nn.Module):
         self.dim_2d = dim_2d if dim_2d != None else 1024
 
         self.backbone_target = backbone_target.lower()
+        if not isinstance(compress_before_fusion, bool):
+            raise ValueError("compress_before_fusion must be a bool")
+        self.compress_before_fusion = compress_before_fusion
+        if compress_before_fusion:
+            if self.backbone_target != "efficientvit" or efficientvit_fusion_mode != "native":
+                raise ValueError("compress_before_fusion requires native EfficientViT fusion")
+            if not model_adapter_config:
+                raise ValueError("compress_before_fusion requires model_adapter_config")
+            shape_out = model_adapter_config.get("shape_out")
+            if (not isinstance(shape_out, Sequence) or len(shape_out) != 2
+                    or any(type(size) is not int or size <= 0 for size in shape_out)):
+                raise ValueError("compress_before_fusion requires a positive 2D shape_out")
         if 'dinov3' in self.backbone_target and 'cnn' in self.backbone_target:
             # Preserve the original DINOv3 initialization and checkpoint layout.
             from .encoder.dinov3cnn_encoder import DINOv3Encoder
@@ -212,10 +227,22 @@ class EmVisRM(nn.Module):
             dim_now = model_adapter_config['dim_out']
             self.shape_out = model_adapter_config['shape_out']
         self.dim_out = dim_now
+        self.output_projection = nn.Identity()
+        if self.compress_before_fusion:
+            if self.model_adapter.dim_mid[-1] != self.dim_2d:
+                raise ValueError("pre-fusion compression must preserve the native channel width")
+            # Move only spatial compression before fusion. Reuse the adapter's
+            # original projection/dropout after fusion, without duplicating weights.
+            merging = self.model_adapter.patch_merging
+            self.output_projection = nn.Sequential(merging.proj, merging.drop)
+            merging.proj = nn.Identity()
+            merging.drop = nn.Identity()
         if self.backbone_target == "efficientvit":
             logger.info(
-                "EfficientViT fusion mode=%s, native width=%d, fusion width=%d, output width=%d",
+                "EfficientViT fusion mode=%s, native width=%d, fusion width=%d, output width=%d, "
+                "compress_before_fusion=%s, output grid=%s",
                 self.efficientvit_fusion_mode, self.backbone.out_channels, self.dim_2d, self.dim_out,
+                self.compress_before_fusion, self.shape_out,
             )
 
         total_params = sum(p.numel() for p in self.parameters())
@@ -272,24 +299,33 @@ class EmVisRM(nn.Module):
         token_dict['image_tokens'] = self.backbone_projection(token_dict['image_tokens'])
         return self.token_forward(token_dict)
 
+    def _adapt_spatial_tokens(self, scene_tokens: Tensor, scene_pos: Tensor):
+        # The adapter operates independently on each view's original patch grid.
+        B, V, P, C = scene_tokens.shape
+        flat = self.model_adapter(
+            scene_tokens.reshape(B * V, P, C),
+            scene_pos.reshape(B * V, P, 2),
+            spatial_only=self.compress_before_fusion,
+        )
+        return flat.reshape(B, V, *flat.shape[-2:])
+
     def token_forward(self, token_dict: Dict):
-        # 2D-only token flow: image_tokens -> mv_fuser -> ResNetAdapter
         time0 = time.time()
         scene_tokens = token_dict['image_tokens']       # [B * S, V, P_image, D]
         scene_pos = token_dict['image_tokens_pos']      # [B * S, V, P_image, 2]
 
+        if self.compress_before_fusion:
+            scene_tokens = self._adapt_spatial_tokens(scene_tokens, scene_pos)
+
         if self.mv_fuser is not None:
             scene_tokens = self.mv_fuser(scene_tokens)
 
-        scene_features = scene_tokens
-        if self.model_adapter is not None:
-            # Flatten to [B*V, P, C] (adapter takes 3D tokens), restore the view dim afterwards
-            B, V, P, C = scene_tokens.shape
-            flat = self.model_adapter(
-                scene_tokens.reshape(B * V, P, C),
-                scene_pos.reshape(B * V, P, 2),
-            )
-            scene_features = flat.reshape(B, V, *flat.shape[-2:])
+        if self.compress_before_fusion:
+            scene_features = self.output_projection(scene_tokens)
+        elif self.model_adapter is not None:
+            scene_features = self._adapt_spatial_tokens(scene_tokens, scene_pos)
+        else:
+            scene_features = scene_tokens
         time1 = time.time()
         logger.debug(f"Token forward time: {time1 - time0:.5f} seconds")
         return scene_features

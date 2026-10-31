@@ -1,0 +1,13 @@
+# @package _global_
+# Same MeanFlow/data recipe; compress native visual tokens before fusion.
+defaults:
+  - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_3v_8gpu_L4
+  - /observation_config/efficientvit_b2_prefusion_2x3_3v
+  - _self_
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b2_prefusion_2x3_meanflow_3v_obs1_h24_8gpu_L4
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

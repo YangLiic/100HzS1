@@ -1,0 +1,12 @@
+# @package _global_
+# Compress each view at native width before multiview attention.
+defaults:
+  - efficientvit_b2_3v
+  - _self_
+
+model:
+  obs_encoder:
+    emvis_config:
+      compress_before_fusion: true
+      model_adapter_config:
+        shape_out: [2, 3]

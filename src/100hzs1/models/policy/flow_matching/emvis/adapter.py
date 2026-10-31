@@ -175,8 +175,10 @@ class ResNetAdapter(nn.Module):
         x: Tensor,
         xpos: Tensor,
         y: Tensor = None,
-        ypos: Tensor = None
+        ypos: Tensor = None,
+        spatial_only: bool = False,
     ) -> Tensor:
+        # spatial_only returns the natural downsampled grid without pooling/projection.
         # x: [LBSV, H * W, C_In]
         # return: [LBSV, H'' * W'', C_Out]
         B, _, C = x.shape
@@ -189,6 +191,13 @@ class ResNetAdapter(nn.Module):
         x = x.view(B, H, W, C).permute(0, 3, 1, 2).contiguous() # [B C_In, H, W]
 
         x = self.downsample_blocks(x) # [B, C_In, H', W']
+        if spatial_only:
+            if x.shape[-2:] != (H_T, W_T):
+                raise ValueError(
+                    f"pre-fusion compression produced grid {tuple(x.shape[-2:])}; "
+                    f"expected {(H_T, W_T)}; adjust input size or downsampling configuration"
+                )
+            return x.flatten(2).transpose(1, 2)
         x = self.patch_merging(x, (H_T, W_T)) # [B, H'', W'', C_Out]
         C = x.shape[-1]
         x = x.view(B, -1, C) # [B, *H_W, C_Out]
