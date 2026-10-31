@@ -10,7 +10,7 @@ import math
 import torch
 
 DEFAULTS = dict(time_distribution="logit_normal", time_mean=-0.4, time_std=1.0,
-                equal_time_ratio=0.5, loss_type="adaptive_l2", loss_gamma=0.5,
+                equal_time_ratio=0.0, loss_type="adaptive_l2", loss_gamma=0.5,
                 loss_eps=1e-3, guidance_scale=1.0, time_embed_scale=None)
 
 

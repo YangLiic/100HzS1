@@ -32,9 +32,9 @@ Only MeanFlow instantiates `model.r_embedder`; the default `tau_token` path adds
 its embedding to the existing time token, preserving positional shapes. Primitive attention is used
 only for the detached JVP pass and original attention flags are restored before
 the parameter-gradient forward. Guidance is disabled (`guidance_scale: 1.0`;
-other values explicitly rejected), and there is no Dispersive Loss. The default
-`equal_time_ratio: 0.5` assigns half each local batch to instantaneous-velocity
-supervision and half to interval supervision in the same model. Adaptive L2
+other values explicitly rejected), and there is no Dispersive Loss. The default `equal_time_ratio: 0.0` samples interval supervision without
+forcing any `t=r` samples. Set it to `0.5` to assign half of each local batch
+to instantaneous-velocity supervision and half to interval supervision. Adaptive L2
 matches the MP1 recipe: gamma=0.5, epsilon=0.001, with active future dimensions
 used for each sample's MSE. `loss_type: mse` is also available.
 Logging separates `meanflow_mse_equal_time` / `meanflow_mse_interval` and their

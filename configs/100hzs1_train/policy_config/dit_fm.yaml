@@ -87,7 +87,8 @@ model:
     time_distribution: logit_normal
     time_mean: -0.4
     time_std: 1.0
-    equal_time_ratio: 0.5
+    time_embed_scale: 1.0
+    equal_time_ratio: 0.0
     loss_type: adaptive_l2
     loss_gamma: 0.5
     loss_eps: 1.0e-3

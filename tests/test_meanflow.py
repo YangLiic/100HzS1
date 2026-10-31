@@ -28,15 +28,20 @@ class MeanFlowTests(unittest.TestCase):
     def test_config_default_and_pure_scope(self):
         self.assertEqual(Config(action_key='state').flow_type, 'fm')
         self.assertEqual(Config(action_key='state').state_key, 'state')
-        self.assertEqual(Config(state_key='state', flow_type='meanflow').meanflow['equal_time_ratio'], .5)
+        self.assertEqual(Config(state_key='state', flow_type='meanflow').meanflow['equal_time_ratio'], 0.0)
         for value in ({'guidance_scale': 2}, {'equal_time_ratio': 1.1},
                       {'loss_eps': 0}, {'time_std': 0}, {'dispersive_weight': .5},
                       {'time_embed_scale': 0}, {'time_embed_scale': float('nan')}):
             with self.assertRaises(ValueError): mf.validate_options(value)
         with self.assertRaises(ValueError): Config(flow_type='unknown')
 
+    def test_default_pairs_have_no_forced_equal_times(self):
+        torch.manual_seed(123)
+        t, r = mf.sample_time_pairs(128, 'cpu', mf.validate_options())
+        self.assertEqual(int((t == r).sum()), 0)
+
     def test_pairs_exact_half_and_seeded(self):
-        options = mf.validate_options()
+        options = mf.validate_options({'equal_time_ratio': 0.5})
         torch.manual_seed(123)
         t, r = mf.sample_time_pairs(16, 'cpu', options)
         self.assertEqual(int((t == r).sum()), 8)
