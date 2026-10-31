@@ -1,42 +1,43 @@
-# handover_block：16组实验（进行中）
+# handover_block：已完成训练与闭环评测结果
 
-截至2026-10-31 14:18 CST：B0/Base的8组训练均已完成并通过主权重与EMA严格重载，其中7组100种子闭环已核验；Base MeanFlow AdaRMS（300epoch）的1-step闭环进行中。B1/B2八组继续等待第一波全部闭环核验完成。当前最高为B0 FM tau_AdaRMS的22/100。未完成项不计为0成功率。
+整理时间：2026-10-31 15:48 CST。原16组实验计划已按用户要求停止；本文仅汇总已完成的8组训练及各自100种子闭环。B1/B2的未完成实验不计入结果。
 
-每组使用同一100个专家验证种子；PyTorch eager BF16、KV开启、CUDA Graph关闭、RGB不翻转、绝对joint14动作、JPEG roundtrip。FM4-step，MeanFlow1-step。评测使用主权重；主权重与EMA都严格重载，但这不代表EMA数值质量已验证正常，相关精度问题见DINO审计报告。
+**当前最高成功率：EfficientViT B0 + FM（4-step）+ tau_AdaRMS，22/100（22%），训练200 epoch。**
 
-| Backbone | 算法 | tau注入 | Epoch | 推理步数 | 状态 | 成功次数/成功率 |
-|---|---|---|---:|---:|---|---:|
-| B0 | FM | tau_token | 200 | 4 | 训练、100种子闭环已核验 | 1/100（1%） |
-| B0 | FM | tau_AdaRMS | 200 | 4 | 训练、100种子闭环已核验 | 22/100（22%） |
-| B0 | MeanFlow | tau_token | 200 | 1 | 训练、100种子闭环已核验 | 5/100（5%） |
-| B0 | MeanFlow | tau_AdaRMS | 300 | 1 | 训练、100种子闭环已核验 | 1/100（1%） |
-| DINO ConvNeXt-Base | FM | tau_token | 200 | 4 | 训练、100种子闭环已核验 | 3/100（3%） |
-| DINO ConvNeXt-Base | FM | tau_AdaRMS | 200 | 4 | 训练、100种子闭环已核验 | 9/100（9%） |
-| DINO ConvNeXt-Base | MeanFlow | tau_token | 300 | 1 | 训练、100种子闭环已核验 | 0/100（0%） |
-| DINO ConvNeXt-Base | MeanFlow | tau_AdaRMS | 300 | 1 | 训练已完成，100种子闭环进行中 | — |
-| B1 | FM | tau_token | 300（计划） | 4 | 等待第一波完成 | — |
-| B1 | FM | tau_AdaRMS | 300（计划） | 4 | 等待第一波完成 | — |
-| B1 | MeanFlow | tau_token | 300（计划） | 1 | 等待第一波完成 | — |
-| B1 | MeanFlow | tau_AdaRMS | 300（计划） | 1 | 等待第一波完成 | — |
-| B2 | FM | tau_token | 300（计划） | 4 | 等待第一波完成 | — |
-| B2 | FM | tau_AdaRMS | 300（计划） | 4 | 等待第一波完成 | — |
-| B2 | MeanFlow | tau_token | 300（计划） | 1 | 等待第一波完成 | — |
-| B2 | MeanFlow | tau_AdaRMS | 300（计划） | 1 | 等待第一波完成 | — |
+| Backbone | 方法 | tau注入 | Epoch | 优化步数 | 推理步数 | 成功次数 | 成功率 |
+|---|---|---|---:|---:|---:|---:|---:|
+| EfficientViT B0 | FM | tau_token | 200 | 21635 | 4 | 1/100 | 1% |
+| EfficientViT B0 | FM | tau_AdaRMS | 200 | 21635 | 4 | 22/100 | 22% |
+| EfficientViT B0 | MeanFlow | tau_token | 200 | 21635 | 1 | 5/100 | 5% |
+| EfficientViT B0 | MeanFlow | tau_AdaRMS | 300 | 32453 | 1 | 1/100 | 1% |
+| DINOv3 ConvNeXt-Base | FM | tau_token | 200 | 21635 | 4 | 3/100 | 3% |
+| DINOv3 ConvNeXt-Base | FM | tau_AdaRMS | 200 | 21635 | 4 | 9/100 | 9% |
+| DINOv3 ConvNeXt-Base | MeanFlow | tau_token | 300 | 32453 | 1 | 0/100 | 0% |
+| DINOv3 ConvNeXt-Base | MeanFlow | tau_AdaRMS | 300 | 32453 | 1 | 6/100 | 6% |
 
-## 训练预算与数据
+## 数据与训练口径
 
-50条demo中实际49条用于训练，episode4留出验证；全局batch128、冻结视觉backbone、训练视频缓存开启、BGR→RGB、训练不用推理KV缓存。纯MeanFlow连续t/r、equal_time_ratio=0、time_embed_scale=1、guidance_scale=1、无Dispersive。
+- 50条demo，49条用于训练、episode4留出验证；留出验证集不是独立测试集。
+- 全局batch=128，冻结预训练视觉backbone；训练开启视频缓存和BGR→RGB，训练不用推理KV缓存。
+- 绝对joint14关节空间，state观测、action监督；horizon=24，包含1个state和23个未来动作。
+- 纯MeanFlow连续t/r，equal_time_ratio=0、time_embed_scale=1、guidance_scale=1、无Dispersive。
+- 用户调整训练时长后，已开始的5组保持200epoch，其余已完成的3组为300epoch。表中epoch来自各自resolved_config.yaml，优化步数来自各训练日志；200/300训练预算不同，比较结果时需同时考虑。
 
-原先已开始的5组保持200epoch，其余11组按用户要求改为300epoch。已开始项目的Epoch来自各自resolved_config.yaml；未开始的“300（计划）”需训练后从实际解析配置再次核验。200/300训练预算不同，不能作为相同训练时长的公平比较。B1/B2使用独立300epoch队列，在B0/Base八组训练及100种子闭环都核验后才开始。
+## 闭环评测与核验
 
-## 证据与产物
+- 每组使用相同100个任务专属、专家验证种子；成功率分母均为完整100个唯一seed，没有使用未完成结果或更换种子。
+- 主权重、PyTorch/eager BF16；KV缓存开启、CUDA Graph关闭；SAPIEN RGB不翻转，JPEG roundtrip开启。FM使用4-step，MeanFlow使用1-step。
+- 已交叉核验result.json、原始worker journal及实际推理日志：100条唯一episode、成功次数、真实backend/NFE、23动作chunk、颜色、KV/Graph、冻结源码与checkpoint配置一致。
+- 8组主权重和EMA均通过严格重载；本表成功率均来自主权重。EMA数值精度排查另见同目录`dino_backbone_pipeline_audit_20261031.md`。
+- W&B的8个正式训练run均已核验服务端finished，最终step与表中各自优化步数一致。
+- seed列表SHA256：`43f1a8201f9f558bd5644327e6154d72b29b78650162104b7d4a0f79ea72e0cb`。初始种子筛选针对特定missing-target断言使用独立guard重试/拒绝，最终固定同一100合法种子，未在模型间更换。
 
-- checkpoint：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/handover_block/handover_block_tau_matrix_20261030_v1/<backbone>_<flow>_<injection>/`
-- 逐种子结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/handover_block_tau_matrix_20261030_v1/<backbone>_<flow>_<injection>_nfe<N>/result.json`
-- 各已完成项重新计数成功次数，核验100个唯一seed与注册表完全一致，并核查真实后端、精度、步数、KV/Graph、颜色和checkpoint。
-- 手交任务种子SHA256：`43f1a8201f9f558bd5644327e6154d72b29b78650162104b7d4a0f79ea72e0cb`。
-- W&B在训练期间由独立CPU relay持续同步；第一波8组均有完成记录，最新服务端核验Base MeanFlow AdaRMS为finished/32453，其余7组此前已核验。已完成step按各run实际21635或32453区分；新训练开始后继续检查其服务端同步。
-- DINO实现排查：同目录`dino_backbone_pipeline_audit_20261031.md`。其中local machine的beat NFE20诊断与本表独立，不计入这16组，也不修改本表推理口径。
-- 初始专家种子构建中对特定missing-target断言使用独立guard进行重试/拒绝；最终注册表已固定100合法种子，未在模型间更换种子。正式训练源码和运行任务未为此改写。
+## 保留结果与停止清理
 
-这是阶段表，不是16组全部完成的最终报告。
+- 已保留以上8组完成权重（含EMA）、训练配置、日志及完整闭环结果；权重文件元数据与8个result.json哈希经清理前后核对一致。
+- machine1/2上的两个未完成B1 FM训练已取消；其未完成训练目录、本地同步文件和两个未完成W&B run已删除，6个尚未开始的训练已撤出待执行队列。
+- 用户停止时8组闭环均已完成，没有仍在运行的评测。待执行/运行训练与评测队列均为空；CPU同步管理器和自动跟进已停止，machine1/2恢复保卡状态。
+- 完成权重：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/handover_block/handover_block_tau_matrix_20261030_v1/<backbone>_<flow>_<injection>/`。
+- 逐种子结果：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/handover_block_tau_matrix_20261030_v1/<backbone>_<flow>_<injection>_nfe<N>/result.json`。
+- 完整8组核验证据：`/DRoboticsAILab/users/licheng.yang/100HzS1_tmp/handover_block_tau_matrix_20261030_v1/firstwave_complete_gate_audit_20261031.json`。
+- 停止与清理记录：`/DRoboticsAILab/users/licheng.yang/100HzS1_tmp/handover_block_tau_matrix_20261030_v1/stopped_by_user_cleanup_20261031.json`。
