@@ -1,0 +1,15 @@
+# @package _global_
+# Standard FM, DINOv3 ConvNeXt-Base, tau_token; change only normalization.
+defaults:
+  - /backbones/dinov3_convnext_base/tau_token/100hzs1_beat_block_hammer_dinov3cnnb_3v_8gpu_L4
+  - _self_
+
+norm: groot
+num_train_epochs: 200
+model:
+  flow_type: fm
+  time_injection: tau_token
+inference:
+  num_inference_timesteps: 4
+output_dir: ${checkpoint_root}/beat_block_hammer/dinov3cnnb_fm_tau_token_norm_${norm}_200epoch
+base_dir: ${output_dir}

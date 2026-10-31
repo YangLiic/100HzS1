@@ -27,6 +27,7 @@ from torchvision.io import ImageReadMode, decode_jpeg
 
 from .image_color import apply_bgr_to_rgb
 from ..common.normalizer import LinearNormalizer
+from ..common.norm import normalizer_from_data, validate_norm
 from ..common.normalize_util import get_identity_normalizer_from_stat, get_range_normalizer_from_stat, robomimic_abs_action_only_dual_arm_normalizer_from_stat
 
 # Duplicated from dataset.py: that module imports lerobot 0.3.3 API at
@@ -711,7 +712,8 @@ class S1Dataset(Dataset):
             validation.video_cache_size_bytes = self.video_cache_size_bytes
         return validation
 
-    def get_normalizer(self, **kwargs):
+    def get_normalizer(self, norm="minmax", **kwargs):
+        norm = validate_norm(norm)
         normalizer = LinearNormalizer()
 
         if "endpose" in self.dataset_meta.features:
@@ -725,7 +727,7 @@ class S1Dataset(Dataset):
         for key, feature in self.dataset_meta.features.items():
             if key in DEFAULT_KEYS or feature["dtype"] in ("image", "video"):
                 continue
-            normalizer[key] = self._create_feature_normalizer(key, feature)
+            normalizer[key] = self._create_feature_normalizer(key, feature, norm=norm)
 
         return normalizer
 
@@ -755,7 +757,11 @@ class S1Dataset(Dataset):
         }
         return get_identity_normalizer_from_stat(stat)
 
-    def _create_feature_normalizer(self, key, feature):
+    def _create_feature_normalizer(self, key, feature, norm="minmax"):
+        if norm != "minmax" and key in {"state", "action"}:
+            values = self._reader.fetch(self.frame_indices)[key]
+            return normalizer_from_data(values, norm)
+
         if feature["dtype"] == "string":
             return self._create_identity_normalizer()
 

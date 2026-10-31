@@ -17,6 +17,7 @@ from ..flow_matching.common.normalizer import LinearNormalizer
 from ..flow_matching.common.module_attr_mixin import ModuleAttrMixin
 
 from ....common.inference import load_inference_options
+from ....common.norm import validate_norm
 from .meanflow import validate_options, sample_time_pairs, objective, time_embedding_scale
 
 import yaml
@@ -47,6 +48,7 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     # commanded expert action.
     supervision_key: Optional[str] = None
     self_attn_first: bool = True
+    norm: str = "minmax"
     flow_type: str = "fm"
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
@@ -66,6 +68,10 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
         self.pkg_map = {}
         for key, value in kwargs.items():
             setattr(self, key, value)
+        self.norm = validate_norm(kwargs.get("norm", "minmax"))
+        if self.norm != "minmax" and kwargs.get("state_key", "state") != "state":
+            raise ValueError("Non-minmax norm currently supports absolute joint state/action; "
+                             "delta/endpose configurations retain norm=minmax")
         self.flow_type = kwargs.get("flow_type", "fm")
         if self.flow_type not in {"fm", "meanflow"}:
             raise ValueError("flow_type must be fm or meanflow")
