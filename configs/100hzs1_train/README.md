@@ -51,3 +51,13 @@ scripts/train/train.sh configs/100hzs1_train/normalization/beat_dinov3_base_tau_
 Choose `minmax.yaml`, `minmax_expanded.yaml`, `pi.yaml`, or `groot.yaml` in
 that directory. Each mode has a separate checkpoint output directory. Override
 `output_dir` when repeating an experiment so existing results are preserved.
+
+## Visual token compression
+
+EfficientViT can compress each view to its natural 2x3 grid before multiview
+fusion with `compress_before_fusion: true`. This path uses two existing ResBlocks,
+skips adaptive pooling, and projects native channels to 1024 after fusion.
+B0/B2 recipes under `backbones/<backbone>/tau_token/` contain `prefusion_2x3`
+in their filenames and use independent checkpoint output paths. B3 also has an
+observation profile. Existing recipes retain fusion before 2x2 compression.
+See [the dimensions, configuration and validation](../../docs/visual_token_compression.md).

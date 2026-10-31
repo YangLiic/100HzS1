@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - efficientvit_b3_3v
+  - _self_
+
+model:
+  obs_encoder:
+    emvis_config:
+      compress_before_fusion: true
+      model_adapter_config:
+        shape_out: [2, 3]

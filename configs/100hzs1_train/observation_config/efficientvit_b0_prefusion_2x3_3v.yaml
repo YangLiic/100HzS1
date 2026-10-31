@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - efficientvit_b2_prefusion_2x3_3v
+  - _self_
+
+model:
+  obs_encoder:
+    emvis_config:
+      backbone_path: ${oc.env:S1_ROOT,.}/pretrained/efficientvit_b0.r224_in1k
+      backbone_config:
+        model_name: efficientvit_b0.r224_in1k
