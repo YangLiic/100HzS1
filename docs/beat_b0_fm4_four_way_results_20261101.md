@@ -79,4 +79,4 @@ Seed SHA256: `fca2035b8f623d52f980843f8f578710c520997db5c7f334f557ebec5a2ec8da`�
 
 ## 收尾边界
 
-四个request均已成功，machine1和machine2恢复holding。全部权重、视频、日志、配置和源码快照保留；未push。用户后续讨论的残差降维/蒸馏/FFN扩张仅为方案，未启动任何新增训练或评测。专用W&B helper和SSH转发将在确认没有其他消费者后按精确PID退出，随后删除本次巡检。
+四个request均已成功，machine1和machine2恢复holding。全部权重、视频、日志、配置和源码快照保留；未push。用户后续讨论的残差降维/蒸馏/FFN扩张仅为方案，未启动任何新增训练或评测。收尾核验确认没有其他消费者后，专用W&B helper PID81428和SSH转发PID81429已于14:11:28UTC退出；beat-b0-fm4-ablation巡检已删除。收尾凭据位于最后一组run目录的cleanup_preflight.json和transport_cleanup.json。
