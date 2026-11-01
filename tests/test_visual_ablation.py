@@ -16,7 +16,8 @@ encoder = import_module('100hzs1.models.policy.flow_matching.emvis.encoder.effic
 adapter = import_module('100hzs1.models.policy.flow_matching.emvis.adapter')
 POLICY = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_'
 NAMES = {'A': POLICY+'postfusion_2x2_fm_d1024_3v_8gpu_L4',
-         'B': POLICY+'stage4repeat_2x3_fm_d2048_3v_8gpu_L4'}
+         'B': POLICY+'stage4repeat_2x3_fm_d2048_3v_8gpu_L4',
+         'C': POLICY+'poststage4_2x2_fm_d2048_3v_8gpu_L4'}
 
 
 def recipe(arm):
@@ -117,6 +118,54 @@ class VisualAblationTests(unittest.TestCase):
         self.assertEqual(restored.output_shape_meta(),torch.Size([3,2,3,1024]))
         obs={key:torch.rand(1,3,240,320) for key in first.rgb_key}
         with torch.no_grad():torch.testing.assert_close(restored(obs),first(obs),rtol=0,atol=0)
+
+    def test_postfusion_repeat_replaces_resblocks_but_preserves_pool_and_gradients(self):
+        m=scene('C').train();events=[];shapes=[]
+        hooks=[m.mv_fuser.register_forward_pre_hook(lambda mod,args:events.append(('fusion',tuple(args[0].shape)))),
+               m.backbone.model.stages[-1].register_forward_hook(lambda mod,args,out:events.append(('stage4',tuple(out.shape)))),
+               m.model_adapter.patch_merging.register_forward_pre_hook(lambda mod,args:shapes.append(tuple(args[0].shape)))]
+        bn_stats={n:b.running_mean.clone() for n,b in m.backbone.model.named_modules() if isinstance(b,nn.BatchNorm2d)}
+        try:
+            out=m(torch.rand(1,3,3,240,320))
+            self.assertEqual(events,[('stage4',(3,128,8,10)),('fusion',(1,3,80,128)),
+                                     ('stage4',(3,128,4,5)),('stage4',(3,128,2,3))])
+            self.assertEqual(shapes,[(3,128,2,3)])
+            self.assertEqual(out.shape,(1,3,4,1024))
+            self.assertIsInstance(m.model_adapter,adapter.ResNetAdapter)
+            self.assertEqual(len(m.model_adapter.downsample_blocks),0)
+            self.assertIs(m.model_adapter.patch_merging.adapter,nn.AdaptiveAvgPool2d)
+            self.assertEqual((m.model_adapter.patch_merging.proj.in_features,m.model_adapter.patch_merging.proj.out_features),(128,1024))
+            self.assertFalse(any(isinstance(mod,adapter.ResBlock) for mod in m.modules()))
+            out.square().mean().backward()
+            for param in [m.backbone.stage4_repeat_projection.weight,next(m.mv_fuser.parameters())]:
+                self.assertIsNotNone(param.grad)
+                self.assertTrue(torch.isfinite(param.grad).all())
+                self.assertGreater(param.grad.abs().sum().item(),0)
+            self.assertTrue(all(p.grad is None and not p.requires_grad for p in m.backbone.model.parameters()))
+            for n,b in m.backbone.model.named_modules():
+                if isinstance(b,nn.BatchNorm2d):
+                    self.assertFalse(b.training);torch.testing.assert_close(b.running_mean,bn_stats[n],rtol=0,atol=0)
+            self.assertEqual([n for n in m.state_dict() if 'stage4_repeat_projection' in n],['backbone.stage4_repeat_projection.weight'])
+            self.assertEqual(sum(p.numel() for p in m.backbone.stage4_repeat_projection.parameters()),8192)
+            # Exact pooling/projection contract, including the overlapping width bins.
+            features=torch.randn(3,128,2,3)
+            expected=m.model_adapter.patch_merging.proj(nn.functional.adaptive_avg_pool2d(features,(2,2)).permute(0,2,3,1))
+            torch.testing.assert_close(m.model_adapter.patch_merging(features,(2,2)),expected,rtol=0,atol=0)
+        finally:
+            for hook in hooks:hook.remove()
+
+    def test_postfusion_json_reload_and_invalid_double_compression(self):
+        cfg=deepcopy(recipe('C')['model']['obs_encoder']['emvis_config']);cfg['load_backbone_pretrain']=False
+        first=vision.VisualEncoder(emvis_config=cfg,rgb_key=['left_cam','right_cam','head_cam']).eval()
+        second=vision.VisualEncoder(emvis_config=json.loads(json.dumps(cfg)),rgb_key=first.rgb_key).eval()
+        second.load_state_dict(first.state_dict(),strict=True)
+        self.assertEqual(second.output_shape_meta(),torch.Size([3,2,2,1024]))
+        obs={key:torch.rand(1,3,240,320) for key in first.rgb_key}
+        with torch.no_grad():torch.testing.assert_close(second(obs),first(obs),rtol=0,atol=0)
+        cfg['model_adapter_config']['conv_num']=2
+        with self.assertRaisesRegex(ValueError,'pool-only'):vision.EmVisRM(**cfg)
+        for position,repeats in [('bad',2),('post_fusion',0)]:
+            with self.assertRaises(ValueError):encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',stage4_repeats=repeats,stage4_repeat_position=position)
 
     def test_legacy_encoder_has_no_extra_state_and_rejects_bad_repeat_counts(self):
         m=encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k')

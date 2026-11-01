@@ -13,7 +13,7 @@ class EfficientViTEncoder(nn.Module):
 
     def __init__(self, model_name="efficientvit_b2.r256_in1k", frozen=True,
                  stage4_repeats=0, mbconv_downsample_blocks=0,
-                 mbconv_downsample_init="stage4_local"):
+                 mbconv_downsample_init="stage4_local", stage4_repeat_position="backbone"):
         super().__init__()
         import timm
 
@@ -24,6 +24,11 @@ class EfficientViTEncoder(nn.Module):
         if type(stage4_repeats) is not int or stage4_repeats < 0:
             raise ValueError("stage4_repeats must be a nonnegative integer")
         self.stage4_repeats = stage4_repeats
+        if stage4_repeat_position not in ("backbone", "post_fusion"):
+            raise ValueError("stage4_repeat_position must be 'backbone' or 'post_fusion'")
+        if stage4_repeat_position == "post_fusion" and not stage4_repeats:
+            raise ValueError("post_fusion requires positive stage4_repeats")
+        self.stage4_repeat_position = stage4_repeat_position
         if type(mbconv_downsample_blocks) is not int or mbconv_downsample_blocks < 0:
             raise ValueError("mbconv_downsample_blocks must be a nonnegative integer")
         if stage4_repeats and mbconv_downsample_blocks:
@@ -104,13 +109,30 @@ class EfficientViTEncoder(nn.Module):
             raise ValueError(f"Expected [B,V,3,H,W], got {tuple(images.shape)}")
         batch, views, channels, height, width = images.shape
         features = self.model.forward_features(images.reshape(-1, channels, height, width))
-        for _ in range(self.stage4_repeats):
-            # Refer to the original module directly: no copy or second set of
-            # stage4 parameters/state keys. Gradients pass through frozen ops
-            # to the trainable bridge; pretrained BatchNorm stays in eval.
-            features = self.model.stages[-1](self.stage4_repeat_projection(features))
+        if self.stage4_repeat_position == "backbone":
+            features = self.repeat_stage4(features)
         for block in self.mbconv_downsample_layers:
             features = block(features)
+        return self._tokens_from_features(features, batch, views)
+
+    def repeat_stage4(self, features):
+        # Reuse the original module without aliases/duplicate state keys. Do not
+        # use no_grad: post-fusion gradients must reach the fuser and bridge.
+        for _ in range(self.stage4_repeats):
+            features = self.model.stages[-1](self.stage4_repeat_projection(features))
+        return features
+
+    def repeat_stage4_tokens(self, tokens, positions):
+        """Compress each fused view's preserved spatial grid, retaining autograd."""
+        batch, views, count, dim = tokens.shape
+        grid_h = int((positions[0, 0, :, 1] == 0).sum().item())
+        grid_w = int((positions[0, 0, :, 0] == 0).sum().item())
+        if grid_h * grid_w != count or dim != self.out_channels:
+            raise ValueError("Fused tokens must preserve the native EfficientViT spatial grid")
+        features = tokens.reshape(batch * views, grid_h, grid_w, dim).permute(0, 3, 1, 2).contiguous()
+        return self._tokens_from_features(self.repeat_stage4(features), batch, views)
+
+    def _tokens_from_features(self, features, batch, views):
         _, dim, grid_h, grid_w = features.shape
         tokens = features.flatten(2).transpose(1, 2).reshape(batch, views, grid_h * grid_w, dim)
         key = (grid_h, grid_w, features.device.type, features.device.index)
