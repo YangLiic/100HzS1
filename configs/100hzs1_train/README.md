@@ -61,3 +61,18 @@ B0/B2 recipes under `backbones/<backbone>/tau_token/` contain `prefusion_2x3`
 in their filenames and use independent checkpoint output paths. B3 also has an
 observation profile. Existing recipes retain fusion before 2x2 compression.
 See [the dimensions, configuration and validation](../../docs/visual_token_compression.md).
+
+## Compact policy width
+
+Recipes with `meanflow_compact` in their filenames align visual, state/action,
+time and DiT features at 256 dimensions. B0 uses a `128 -> 256 -> GELU -> 256`
+visual projector. The state/action encoder keeps all three Linear layers and
+both GELU activations, using `14 -> 256 -> 256 -> 256` instead of 2048-wide
+layers. The extra scene MLP is Identity because its input is already aligned.
+The DiT retains eight layers and uses four 64-dimensional heads.
+
+`model.hidden_size=128` or `model.hidden_size=512` selects alternative widths;
+visual output size, head count and the checkpoint output path follow that value.
+Existing 2048-wide recipes remain unchanged. This is a new training architecture,
+so these recipes use independent paths and do not resume old policy checkpoints.
+See [the full computation and validation](../../docs/visual_token_compression.md).

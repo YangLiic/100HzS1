@@ -33,6 +33,7 @@ class VisualEncoder(ModuleAttrMixin):
         if self.scene_encoder.backbone_target == "efficientvit":
             emvis_config["efficientvit_fusion_mode"] = self.scene_encoder.efficientvit_fusion_mode
             emvis_config["compress_before_fusion"] = self.scene_encoder.compress_before_fusion
+            emvis_config["output_projection_type"] = self.scene_encoder.output_projection_type
         # update emvis_config after initialization
         if 'load_backbone_pretrain' in emvis_config:
             emvis_config['load_backbone_pretrain'] = False
@@ -97,6 +98,7 @@ class EmVisRM(nn.Module):
         backbone_trainable: bool = False,
         efficientvit_fusion_mode: str = "native",
         compress_before_fusion: bool = False,
+        output_projection_type: str = "linear",
         **kwargs
     ):
         super().__init__()
@@ -108,6 +110,11 @@ class EmVisRM(nn.Module):
         if not isinstance(compress_before_fusion, bool):
             raise ValueError("compress_before_fusion must be a bool")
         self.compress_before_fusion = compress_before_fusion
+        if output_projection_type not in ("linear", "mlp2x_gelu"):
+            raise ValueError("output_projection_type must be 'linear' or 'mlp2x_gelu'")
+        if output_projection_type != "linear" and not compress_before_fusion:
+            raise ValueError("nonlinear output projection requires compress_before_fusion")
+        self.output_projection_type = output_projection_type
         if compress_before_fusion:
             if self.backbone_target != "efficientvit" or efficientvit_fusion_mode != "native":
                 raise ValueError("compress_before_fusion requires native EfficientViT fusion")
@@ -234,15 +241,23 @@ class EmVisRM(nn.Module):
             # Move only spatial compression before fusion. Reuse the adapter's
             # original projection/dropout after fusion, without duplicating weights.
             merging = self.model_adapter.patch_merging
-            self.output_projection = nn.Sequential(merging.proj, merging.drop)
+            if self.output_projection_type == "mlp2x_gelu":
+                self.output_projection = nn.Sequential(
+                    merging.proj,
+                    nn.GELU(approximate="tanh"),
+                    nn.Linear(self.dim_out, self.dim_out),
+                    merging.drop,
+                )
+            else:
+                self.output_projection = nn.Sequential(merging.proj, merging.drop)
             merging.proj = nn.Identity()
             merging.drop = nn.Identity()
         if self.backbone_target == "efficientvit":
             logger.info(
                 "EfficientViT fusion mode=%s, native width=%d, fusion width=%d, output width=%d, "
-                "compress_before_fusion=%s, output grid=%s",
+                "compress_before_fusion=%s, output grid=%s, output projection=%s",
                 self.efficientvit_fusion_mode, self.backbone.out_channels, self.dim_2d, self.dim_out,
-                self.compress_before_fusion, self.shape_out,
+                self.compress_before_fusion, self.shape_out, self.output_projection_type,
             )
 
         total_params = sum(p.numel() for p in self.parameters())

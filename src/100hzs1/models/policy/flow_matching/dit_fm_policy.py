@@ -270,7 +270,14 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
     def build_condition_adapter(
         self, projector_type, in_features, out_features):
         projector = None
-        if projector_type == 'linear':
+        if projector_type == 'identity':
+            if in_features != out_features:
+                raise ValueError(
+                    f"identity condition adapter requires matching widths: "
+                    f"{in_features} != {out_features}"
+                )
+            projector = nn.Identity()
+        elif projector_type == 'linear':
             projector = nn.Linear(in_features, out_features)
         else:
             mlp_gelu_match = re.match(r'^mlp(\d+)x_gelu$', projector_type)

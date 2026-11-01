@@ -103,3 +103,80 @@ OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 本次未提交正式训练、未测量 GPU/TensorRT 时延或 RoboTwin 成功率。
 融合序列变短是结构事实，端到端速度与任务精度需要训练后另做实测。
+
+## 256 维对齐与非线性视觉投影（2026-11-01）
+
+新增 compact 训练入口，将视觉条件、状态/动作 token、时间嵌入、DiT 隐藏层
+统一为 256 维。前述 1024→2048 是原入口的结构，仍保留用于对照；compact
+入口不会经过 1024/2048 维瓶颈。
+
+| 部分 | 原入口 | compact 入口 |
+| --- | --- | --- |
+| B0 编码/压缩/融合 | 128 维，每视图 6 token | 保持相同 |
+| B0 融合后视觉投影 | Linear 128→1024 | Linear 128→256 → GELU → Linear 256→256 |
+| scene_adaptor | Linear 1024→2048 → GELU → Linear 2048→2048 | Identity，视觉特征已是 256 维 |
+| state_adaptor | Linear 14→2048 → GELU → Linear 2048→2048 → GELU → Linear 2048→2048 | Linear 14→256 → GELU → Linear 256→256 → GELU → Linear 256→256 |
+| DiT | 8 层，2048 维，32 heads | 8 层，256 维，4 heads |
+| 每层 K/V 联合投影 | Linear 2048→4096 | Linear 256→512，K、V 各 256 维 |
+| 每层每个 K / V | `[B,32,18,64]` | `[B,4,18,64]` |
+| 真实关节状态/输出动作 | 14 维 | 保持 14 维 |
+
+state_adaptor 没有删除 MLP：仍有三层 Linear 和两处 GELU，激活在最后一层前。
+采样时先将观测状态填入 trajectory 前缀，再将剩余位置的噪声动作与状态前缀
+一起逐 token 通过同一个 state_adaptor。它们共用权重，随后加入时间/位置条件
+进入 DiT。缩小的是内部特征表示，而非真实关节数。
+
+视觉 MLP 位于 `scene_encoder.output_projection`，采用 GELU(tanh)，第二层后
+没有额外激活。原 scene_adaptor 在 compact 配方中为 Identity，避免再增加
+一套 256→256 的 MLP。B2 同样支持此配方，首层投影为其原生 384→256。
+
+共享配置为 `policy_config/compact_width.yaml`：
+
+```yaml
+model:
+  hidden_size: 256
+  num_heads: ${eval:'${model.hidden_size}//64'}
+  scene_adaptor: identity
+  state_adaptor: mlp3x_gelu
+  obs_encoder:
+    emvis_config:
+      output_projection_type: mlp2x_gelu
+      model_adapter_config:
+        dim_out: ${model.hidden_size}
+```
+
+compact 的 B0/B2 配方文件名在 `meanflow` 后增加 `_compact`，例如：
+
+```bash
+NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
+  configs/100hzs1_train/backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml \
+  --dry-run
+```
+
+可通过 `model.hidden_size=128` 或 `model.hidden_size=512` 选择对照宽度，
+视觉输出宽度、DiT heads 和输出目录中的 d128/d256/d512 标识同步变化，
+每个 DiT head 保持 64 维。配置默认仍为用户选择的 256 维。
+
+`output_projection_type` 会写入新 checkpoint；缺省仍为原先的 linear，
+保持旧结构权重键。Identity 条件适配器会显式检查输入输出宽度相等。
+compact 结构需要新训练，不能 strict 加载 2048 维策略或恢复其优化器。
+新入口保持 `resume_from_checkpoint: null`，使用独立输出目录。
+
+验证覆盖 128/256/512 配置、B0/B2 前向、状态/视觉各层梯度、FM/MeanFlow/
+tau_AdaRMS 的两次 CPU 优化器更新、冻结主干、KV 等价性、完整策略 strict
+reload，以及原有视觉/推理/时间注入回归。共 50 项 CPU 测试通过：
+
+```bash
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_compact_policy test_visual_compression test_visual_backbones \
+  test_inference_backends test_kv_cache test_100hzs1_checkpoint_metadata \
+  test_time_injection -v
+```
+
+完整 8 层、256 维模型的 encoder（含 KV 构建）及 DiT step 均通过 ONNX
+checker 和 ONNX Runtime CPU 对照：导出缓存形状为 `[1,8,2,4,18,64]`，
+KV 最大绝对误差约 2.27e-6，DiT step 最大绝对误差约 4.77e-7，
+状态归一化误差为 0。此验证使用随机初始化模型检查实现和导出一致性。
+
+这些检查不代表正式训练后的任务精度，也未测量 GPU/TensorRT 时延。

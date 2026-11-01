@@ -1,0 +1,13 @@
+# @package _global_
+# One shared width for visual conditions, state/action tokens, time and DiT.
+# Supported comparison widths: 128, 256, 512. Keep 64 channels per DiT head.
+model:
+  hidden_size: 256
+  num_heads: ${eval:'${model.hidden_size}//64'}
+  scene_adaptor: identity
+  state_adaptor: mlp3x_gelu
+  obs_encoder:
+    emvis_config:
+      output_projection_type: mlp2x_gelu
+      model_adapter_config:
+        dim_out: ${model.hidden_size}
