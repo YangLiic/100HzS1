@@ -1,0 +1,17 @@
+# @package _global_
+# Same compact width/data recipe, with action-time fusion and AdaRMS modulation.
+defaults:
+  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_compact_3v_8gpu_L4
+  - _self_
+
+model:
+  time_injection: tau_AdaRMS
+  meanflow:
+    time_embed_scale: 1.0
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b0_prefusion_2x3_meanflow_adarms_d${model.hidden_size}_3v_obs1_h24_8gpu_L4
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

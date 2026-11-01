@@ -180,3 +180,40 @@ KV 最大绝对误差约 2.27e-6，DiT step 最大绝对误差约 4.77e-7，
 状态归一化误差为 0。此验证使用随机初始化模型检查实现和导出一致性。
 
 这些检查不代表正式训练后的任务精度，也未测量 GPU/TensorRT 时延。
+
+## 两种 tau 注入的 compact 配置
+
+`tau_token` 与 `tau_AdaRMS` 都使用同一个 `model.hidden_size=256`。
+通用模块本身按 hidden_size 构造，时间路径没有固定的 2048 维层。
+MeanFlow 的 t/r 两个时间嵌入器均为 sin/cos 频率特征 256 → Linear 256→256
+→ SiLU → Linear 256→256，两个向量相加后仍为 256 维。
+
+| 路径 | tau_token | tau_AdaRMS |
+| --- | --- | --- |
+| 时间条件宽度 | 256 | 256 |
+| 状态/动作序列 | 加一个 256 维时间 token，`[B,25,256]` | 不加时间 token，`[B,24,256]` |
+| 动作与时间融合 | 不使用该模块 | 仅未来 23 个动作位置拼接为 512 维，再 Linear 512→256 → GELU → Linear 256→256 |
+| 每个残差子层的调制 | 不使用该模块 | SiLU → Linear 256→768，拆成各 256 维的 scale/shift/gate |
+| 输出端调制 | 不使用该模块 | SiLU → Linear 256→512，拆成各 256 维的 scale/shift |
+| 每层视觉 K/V | `[B,4,18,64]` | `[B,4,18,64]` |
+
+768 和 512 是多个调制参数拼接的总宽度，不改变 token 的 256 维隐藏表示。
+MeanFlow 连续时间仍使用 `time_embed_scale: 1.0`。
+
+B0/B2 均提供两种可直接选择的训练入口：
+
+- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml`
+- `backbones/efficientvit_b0/tau_AdaRMS/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_adarms_compact_3v_8gpu_L4.yaml`
+- B2 对应入口将路径和文件名中的 `b0` 替换为 `b2`。
+
+AdaRMS 配方继承同一 compact 宽度、视觉结构和数据配方，只切换时间注入，
+使用独立的 `_adarms_d256_` 输出目录。选择 128/512 维对照时，所有时间注入层
+也跟随该隐藏维度变化；原始 sin/cos 频率特征保持 256 维，再投影到目标宽度。
+
+补充的 compact/time-injection 两套测试共 14 项通过，覆盖实际时间 token 长度、
+动作与时间融合输入、所有残差层的 scale/shift/gate、末层调制、时间路径梯度、
+两种注入方式的完整策略 strict reload 和 cached/uncached 采样一致性。
+
+256 维 AdaRMS 的完整 DiT step 还通过 ONNX checker 与 ONNX Runtime CPU
+对照，最大绝对误差约 3.88e-7。该检查将 scale/shift/gate 与末层调制权重
+设为非零，避免只验证零初始化的简化路径；未启动正式训练。

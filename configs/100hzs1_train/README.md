@@ -76,3 +76,8 @@ visual output size, head count and the checkpoint output path follow that value.
 Existing 2048-wide recipes remain unchanged. This is a new training architecture,
 so these recipes use independent paths and do not resume old policy checkpoints.
 See [the full computation and validation](../../docs/visual_token_compression.md).
+
+Both `tau_token/` and `tau_AdaRMS/` have B0/B2 compact recipes. AdaRMS filenames
+use `meanflow_adarms_compact` and independent output paths. The shared hidden
+width also controls time embeddings, action-time fusion and every AdaRMS
+scale/shift/gate projection; no 2048-wide time path remains in compact models.

@@ -15,10 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 RGB_KEYS = ["left_cam", "right_cam", "head_cam"]
 
 
-def config(variant="b0", width=256):
+def config(variant="b0", width=256, injection="tau_token"):
     OmegaConf.register_new_resolver("eval", eval, replace=True)
-    name = (f"backbones/efficientvit_{variant}/tau_token/"
-            f"100hzs1_beat_block_hammer_efficientvit_{variant}_prefusion_2x3_meanflow_compact_3v_8gpu_L4")
+    suffix = "_adarms" if injection == "tau_AdaRMS" else ""
+    name = (f"backbones/efficientvit_{variant}/{injection}/"
+            f"100hzs1_beat_block_hammer_efficientvit_{variant}_prefusion_2x3_meanflow{suffix}_compact_3v_8gpu_L4")
     with initialize_config_dir(version_base=None, config_dir=str(ROOT / "configs/100hzs1_train")):
         cfg = compose(config_name=name, overrides=[f"model.hidden_size={width}"])
         OmegaConf.resolve(cfg)
@@ -26,7 +27,7 @@ def config(variant="b0", width=256):
 
 
 def make_policy(variant="b0", width=256, flow="meanflow", injection="tau_token"):
-    cfg = config(variant, width)["model"]
+    cfg = config(variant, width, injection)["model"]
     cfg["obs_encoder"]["emvis_config"]["load_backbone_pretrain"] = False
     cfg.update(flow_type=flow, time_injection=injection)
     policy = policy_module.S1DitFlowMatching(policy_module.S1DitFlowMatchingConfig(**cfg)).float()
@@ -125,6 +126,13 @@ class CompactPolicyTests(unittest.TestCase):
                     checked = [m.weight for m in policy.state_adaptor if isinstance(m, nn.Linear)]
                     checked += [policy.obs_encoder.scene_encoder.output_projection[i].weight for i in (0, 2)]
                     checked.append(policy.model.blocks[0].cross_attn.kv.weight)
+                    checked.append(policy.model.t_embedder.mlp[0].weight)
+                    if policy.model.r_embedder is not None:
+                        checked.append(policy.model.r_embedder.mlp[0].weight)
+                    if injection == "tau_AdaRMS":
+                        checked.append(policy.model.action_time_fusion[0].weight)
+                        checked.append(policy.model.final_modulation[1].weight)
+                        checked += [m[1].weight for block in policy.model.blocks for m in block.modulations]
                     for parameter in checked:
                         self.assertIsNotNone(parameter.grad)
                         self.assertTrue(torch.isfinite(parameter.grad).all())
@@ -133,23 +141,26 @@ class CompactPolicyTests(unittest.TestCase):
                     optimizer.step()
 
     def test_strict_json_reload_and_cached_sampling(self):
-        policy = make_policy().eval()
-        obs = observation()
-        noise = torch.randn(1, 24, 14)
-        with torch.no_grad():
-            expected = policy.predict_action(obs, noise_trajectory=noise, use_kv_cache=True, use_cuda_graph=False)
-            plain = policy.predict_action(obs, noise_trajectory=noise, use_kv_cache=False, use_cuda_graph=False)
-        self.assertEqual(expected["action"].shape, (1, 23, 14))
-        torch.testing.assert_close(expected["action"], plain["action"], rtol=1e-5, atol=1e-6)
-        restored = policy_module.S1DitFlowMatching(
-            policy_module.S1DitFlowMatchingConfig(**json.loads(policy.config.to_json_string()))).float()
-        restored.load_state_dict(policy.state_dict(), strict=True)
-        restored.model.dtype = restored.model.t_embedder.dtype = restored.model.r_embedder.dtype = torch.float32
-        restored.eval()
-        self.assertEqual(restored.obs_encoder.scene_encoder.output_projection_type, "mlp2x_gelu")
-        with torch.no_grad():
-            actual = restored.predict_action(obs, noise_trajectory=noise, use_kv_cache=True, use_cuda_graph=False)
-        torch.testing.assert_close(actual["action"], expected["action"], rtol=0, atol=0)
+        for injection in ("tau_token", "tau_AdaRMS"):
+            with self.subTest(injection=injection):
+                policy = make_policy(injection=injection).eval()
+                obs = observation()
+                noise = torch.randn(1, 24, 14)
+                with torch.no_grad():
+                    expected = policy.predict_action(obs, noise_trajectory=noise, use_kv_cache=True, use_cuda_graph=False)
+                    plain = policy.predict_action(obs, noise_trajectory=noise, use_kv_cache=False, use_cuda_graph=False)
+                self.assertEqual(expected["action"].shape, (1, 23, 14))
+                torch.testing.assert_close(expected["action"], plain["action"], rtol=1e-5, atol=1e-6)
+                restored = policy_module.S1DitFlowMatching(
+                    policy_module.S1DitFlowMatchingConfig(**json.loads(policy.config.to_json_string()))).float()
+                restored.load_state_dict(policy.state_dict(), strict=True)
+                restored.model.dtype = restored.model.t_embedder.dtype = restored.model.r_embedder.dtype = torch.float32
+                restored.eval()
+                self.assertEqual(restored.model.time_injection, injection)
+                self.assertEqual(restored.obs_encoder.scene_encoder.output_projection_type, "mlp2x_gelu")
+                with torch.no_grad():
+                    actual = restored.predict_action(obs, noise_trajectory=noise, use_kv_cache=True, use_cuda_graph=False)
+                torch.testing.assert_close(actual["action"], expected["action"], rtol=0, atol=0)
 
     def test_alternative_widths_reach_cache_without_hidden_2048(self):
         for width in (128, 512):
@@ -162,6 +173,50 @@ class CompactPolicyTests(unittest.TestCase):
                     for k, v in policy.model.prepare_kv_cache(c):
                         self.assertEqual(k.shape, (1, width // 64, 18, 64))
                         self.assertEqual(v.shape, k.shape)
+
+    def test_both_time_injection_paths_and_recipes_use_compact_width(self):
+        outputs = set()
+        for variant in ("b0", "b2"):
+            for injection in ("tau_token", "tau_AdaRMS"):
+                for width in (128, 256, 512):
+                    cfg = config(variant, width, injection)
+                    self.assertEqual(cfg["model"]["time_injection"], injection)
+                    self.assertEqual(cfg["model"]["hidden_size"], width)
+                    self.assertEqual(cfg["model"]["meanflow"]["time_embed_scale"], 1.)
+                    outputs.add(cfg["output_dir"])
+        self.assertEqual(len(outputs), 12)
+        for injection in ("tau_token", "tau_AdaRMS"):
+            with self.subTest(injection=injection):
+                policy = make_policy(injection=injection).eval()
+                head = policy.model
+                self.assertEqual(linear_shapes(head.t_embedder.mlp), [(256, 256), (256, 256)])
+                self.assertEqual(linear_shapes(head.r_embedder.mlp), [(256, 256), (256, 256)])
+                length = 25 if injection == "tau_token" else 24
+                self.assertEqual(head.x_pos_embed.shape, (1, length, 256))
+                self.assertEqual(head.scene_cond_pos_embed.shape, (1, 18, 256))
+                first_inputs, fusion_inputs = [], []
+                hook = head.blocks[0].register_forward_pre_hook(
+                    lambda module, args: first_inputs.append(tuple(args[0].shape)))
+                fusion_hook = None
+                if injection == "tau_AdaRMS":
+                    self.assertEqual(linear_shapes(head.action_time_fusion), [(512, 256), (256, 256)])
+                    self.assertEqual(linear_shapes(head.final_modulation), [(256, 512)])
+                    for block in head.blocks:
+                        self.assertEqual(len(block.modulations), 3)
+                        for modulation in block.modulations:
+                            self.assertEqual(linear_shapes(modulation), [(256, 768)])
+                    fusion_hook = head.action_time_fusion.register_forward_pre_hook(
+                        lambda module, args: fusion_inputs.append(tuple(args[0].shape)))
+                try:
+                    with torch.no_grad():
+                        result = policy.predict_action(observation(), use_kv_cache=True, use_cuda_graph=False)
+                finally:
+                    hook.remove()
+                    if fusion_hook is not None:
+                        fusion_hook.remove()
+                self.assertEqual(result["action"].shape, (1, 23, 14))
+                self.assertEqual(first_inputs, [(1, length, 256)])
+                self.assertEqual(fusion_inputs, [(1, 23, 512)] if injection == "tau_AdaRMS" else [])
 
     def test_identity_and_projection_options_fail_on_incompatible_settings(self):
         cls = policy_module.S1DitFlowMatching
