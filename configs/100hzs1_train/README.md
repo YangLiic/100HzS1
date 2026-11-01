@@ -83,21 +83,28 @@ scale/shift/gate projection; no 2048-wide time path remains in compact models.
 
 ## B0 controlled FM experiments
 
-B0 dimension/token-compression experiments use standard FM and four inference
-steps unless MeanFlow is explicitly requested. The old B0 MeanFlow experimental
-recipes and their local training/evaluation artifacts were removed by request.
-B0 pretrained weights, the native B0 profile, implementation code and other
-backbones remain available.
+Only three B0 FM4 experiment entrypoints are maintained. Both ablations inherit
+the original 2048-wide baseline, with the same training/data/inference settings.
 
-- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4.yaml`:
-  original fusion and 2x2 compression; Linear128->512, flatten3x4=12,
-  scene MLP512->1024->GELU->1024; state/action/t/DiT1024 (standard FM has no r embedder).
-- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_stage4repeat_2x3_fm_d2048_3v_8gpu_L4.yaml`:
-  two additional calls of the same frozen pretrained stage4 with one shared
-  trainable128->64 bridge, 6 tokens/view before fusion; Linear128->1024,
-  scene MLP1024->2048->GELU->2048; state/action/t/DiT2048 (standard FM has no r embedder).
-  No independent MBConv downsamplers and no adaptive2x2 pooling in this case.
+| Recipe suffix | Visual compression | Scene output / state / action / time / DiT width |
+|---|---|---:|
+| `native_fm_d2048_baseline_3v_8gpu_L4` | fuse80/view -> two ResBlocks -> pool2x2 | 2048 |
+| `stage4repeat_2x2_fm_d2048_3v_8gpu_L4` | shared stage4x2 -> pool2x2 -> fuse4/view | 2048 |
+| `resmlp_fm_d1024_3v_8gpu_L4` | baseline compression, residual RMS scene MLP | 1024 |
 
-Both recipes retain beat_block_hammer, three views, min-max state/action,
-50 demonstrations, seed42, 200 epochs, BF16, tau_token, KV-on and Graph-off.
-They initialize new policy heads and have separate output paths.
+All are under `backbones/efficientvit_b0/tau_token/` with prefix
+`100hzs1_beat_block_hammer_efficientvit_b0_` and suffix `.yaml`.
+Every recipe retains Linear128->1024 and 12 final visual condition tokens.
+Stage4 pooling is before multiview fusion, adds zero parameters, and has no
+post-fusion ResBlocks. The residual recipe keeps the baseline ResBlocks/pool.
+
+Standard FM / tau_token / four inference steps, 50demo / seed42 / 200epochs /
+batch128 / BF16 / three views / minmax / KV-on / Graph-off remain common.
+Output paths are separated by recipe and timestamp; no old checkpoint is resumed.
+DiT implementation is unchanged: eight layers and fixed D->D->GELU->D FFNs.
+Only the existing hidden-width/head-count settings differ for the 1024 ablation.
+
+The old direct-width1024 and six-token-stage4 YAMLs are archived outside the
+Hydra search path at `docs/archived_configs/beat_b0_fm4_20261101/`.
+Old checkpoints/results/frozen snapshots are untouched.
+See [the three full computation paths](../../docs/beat_b0_fm4_three_configs_20261101.md).

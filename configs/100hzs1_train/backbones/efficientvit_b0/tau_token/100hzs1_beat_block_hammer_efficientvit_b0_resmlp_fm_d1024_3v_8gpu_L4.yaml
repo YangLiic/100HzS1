@@ -1,7 +1,7 @@
 # @package _global_
-# DiT FFNs are fixed in code to the 1024 token width; visual residual MLP remains 2048 inside.
+# Keep baseline visual compression/projection; use a 1024-wide residual scene MLP.
 defaults:
-  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4
+  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_native_fm_d2048_baseline_3v_8gpu_L4
   - _self_
 
 model:
@@ -9,14 +9,5 @@ model:
   num_heads: 16
   scene_adaptor: residual_mlp2x_gelu
   scene_adaptor_hidden_size: 2048
-  obs_encoder:
-    emvis_config:
-      model_adapter_config:
-        dim_out: 1024
 
-resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_resmlp_d1024_20261101_v1
-base_dir: ${output_dir}
-hydra:
-  run:
-    dir: ${output_dir}/hydra
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_fm4_visual_resmlp_d1024/${now:%Y%m%d_%H%M%S}

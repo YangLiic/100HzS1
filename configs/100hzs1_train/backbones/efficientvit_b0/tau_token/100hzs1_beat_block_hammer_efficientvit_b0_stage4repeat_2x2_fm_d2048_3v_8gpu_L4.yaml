@@ -1,20 +1,17 @@
 # @package _global_
-# Shared stage4 compression and parameter-free 2x2 pooling BOTH precede fusion.
+# Frozen shared stage4 x2 -> parameter-free 2x2 pool -> multiview fusion.
 defaults:
-  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_stage4repeat_2x3_fm_d2048_3v_8gpu_L4
+  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_native_fm_d2048_baseline_3v_8gpu_L4
   - _self_
 
 model:
   obs_encoder:
     emvis_config:
       backbone_config:
+        stage4_repeats: 2
         stage4_pool_shape: [2, 2]
       model_adapter_config:
-        shape_out: [2, 2]
+        target: TokenProjection
+        conv_num: null
 
-resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_prefusion_stage4_pool2x2_20261101_v1
-base_dir: ${output_dir}
-hydra:
-  run:
-    dir: ${output_dir}/hydra
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_fm4_prefusion_stage4_pool2x2/${now:%Y%m%d_%H%M%S}

@@ -1,19 +1,49 @@
 # @package _global_
-# Original B0 baseline: same standard FM4 recipe, restore only native widths.
+# Canonical B0 baseline shared by the two maintained ablations.
 defaults:
-  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4
+  - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4
+  - /observation_config/efficientvit_b0_native_3v
   - _self_
 
+norm: minmax
+seed: 42
+num_train_epochs: 200
+checkpointing_period: 2000
+inference:
+  num_inference_timesteps: 4
+  backend: eager
+  precision: bf16
+  use_kv_cache: true
+  use_cuda_graph: false
+
 model:
+  flow_type: fm
+  time_injection: tau_token
   hidden_size: 2048
+  depth: 8
   num_heads: 32
+  scene_adaptor: mlp2x_gelu
+  scene_adaptor_hidden_size: null
+  state_adaptor: mlp3x_gelu
+  noise_scheduler:
+    num_train_timesteps: 1000
+    num_inference_timesteps: 4
   obs_encoder:
     emvis_config:
+      backbone_config:
+        stage4_repeats: 0
+        stage4_pool_shape: null
+        mbconv_downsample_blocks: 0
+      compress_before_fusion: false
+      output_projection_type: linear
       model_adapter_config:
+        target: ResNetAdapter
         dim_out: 1024
+        shape_out: [2, 2]
+        conv_num: 2
 
 resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_native_d2048_baseline_20261101_v1
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_fm4_baseline/${now:%Y%m%d_%H%M%S}
 base_dir: ${output_dir}
 hydra:
   run:
