@@ -52,6 +52,8 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     flow_type: str = "fm"
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
+    ffn_hidden_size: Optional[int] = None
+    scene_adaptor_hidden_size: Optional[int] = None
     
 
     def __init__(self, *args, **kwargs):
@@ -126,6 +128,7 @@ def create_dit_model(
         flow_type=getattr(config, "flow_type", "fm"),
         time_injection=getattr(config, "time_injection", "tau_token"),
         n_obs_steps=config.n_obs_steps,
+        ffn_hidden_size=getattr(config, "ffn_hidden_size", None),
     )
 
 class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
@@ -196,12 +199,14 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             flow_type=self.flow_type,
             time_injection=config.time_injection,
             n_obs_steps=n_obs_steps,
+            ffn_hidden_size=getattr(config, "ffn_hidden_size", None),
         )
 
         self.scene_adaptor = self.build_condition_adapter(
-            config.scene_adaptor, 
-            in_features=obs_feature_dim, 
-            out_features=hidden_size
+            config.scene_adaptor,
+            in_features=obs_feature_dim,
+            out_features=hidden_size,
+            hidden_features=getattr(config, "scene_adaptor_hidden_size", None),
         )
 
         # A `state` refers to an action or a proprioception vector
@@ -268,7 +273,13 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         return F.mse_loss(pred[..., active], target[..., active], reduction="mean")
 
     def build_condition_adapter(
-        self, projector_type, in_features, out_features):
+        self, projector_type, in_features, out_features, hidden_features=None):
+        if projector_type == 'residual_mlp2x_gelu':
+            from .module.condition_adapter import ResidualMLPAdapter
+            return ResidualMLPAdapter(in_features, out_features,
+                                      2 * out_features if hidden_features is None else hidden_features)
+        if hidden_features is not None:
+            raise ValueError("scene_adaptor_hidden_size requires residual_mlp2x_gelu")
         projector = None
         if projector_type == 'identity':
             if in_features != out_features:
