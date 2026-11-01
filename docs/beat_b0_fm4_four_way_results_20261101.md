@@ -1,5 +1,9 @@
 # B0标准FM4：四组最终结果
 
+> 清理记录：用户于2026-11-01明确要求退役“融合后共享stage4＋2×2”组。
+> 该组专属源码分支/YAML、正式与临时权重、RoboTwin结果及100个视频、独立run目录已删除。
+> 本文保留其8/100历史统计和W&B日志链接；该组原路径已失效。其他三组及RMSNorm实验保留。
+
 四组均已完成训练、最终main/EMA严格重载、100固定seed闭环与完整审计。
 
 | 实验 | 压缩方式 | DiT维度 | token/视角 | 总参数量 | 成功数/100 |
@@ -29,7 +33,7 @@ Seed SHA256: `fca2035b8f623d52f980843f8f578710c520997db5c7f334f557ebec5a2ec8da`�
 
 - 训练权重：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/beat_block_hammer/beat_b0_fm4_native_d2048_baseline_20261101_v1`
 - 评测汇总：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/beat_block_hammer/beat_b0_fm4_native_d2048_baseline_20261101_v1/main_nfe4_100_v1/result.json`
-- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1`；`final_audit.json`
+- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_native_d2048_baseline_20261101_v1`；`final_audit.json`
 - W&B：[正式run](https://wandb.ai/gonzalezmonica966-digua/100HzS1/runs/3dvbn2u7)，实际服务端 **FINISHED / 8771**。
 
 ### 降维组
@@ -40,7 +44,7 @@ Seed SHA256: `fca2035b8f623d52f980843f8f578710c520997db5c7f334f557ebec5a2ec8da`�
 
 - 训练权重：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/beat_block_hammer/beat_b0_fm4_ablation_20261101_v1/width1024_post2x2`
 - 评测汇总：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/beat_block_hammer/beat_b0_fm4_ablation_20261101_v1/width1024_post2x2/main_nfe4_100_v1/result.json`
-- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1`；`final_audit.json`
+- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_ablation_20261101_v1/cases/width1024_post2x2`；`final_audit.json`
 - W&B：[正式run](https://wandb.ai/gonzalezmonica966-digua/100HzS1/runs/pt5tbit0)，实际服务端 **FINISHED / 8771**。
 
 ### 融合前共享stage4
@@ -51,18 +55,15 @@ Seed SHA256: `fca2035b8f623d52f980843f8f578710c520997db5c7f334f557ebec5a2ec8da`�
 
 - 训练权重：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/beat_block_hammer/beat_b0_fm4_ablation_20261101_v1/stage4_d2048`
 - 评测汇总：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/beat_block_hammer/beat_b0_fm4_ablation_20261101_v1/stage4_d2048/main_nfe4_100_v1/result.json`
-- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1`；`final_audit.json`
+- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_ablation_20261101_v1/cases/stage4_d2048`；`final_audit.json`
 - W&B：[正式run](https://wandb.ai/gonzalezmonica966-digua/100HzS1/runs/bnjepzv2)，实际服务端 **FINISHED / 8771**。
 
 ### 融合后共享stage4+2×2
 
 视觉路径：`128→1024→2048→2048`；三视角共12个条件token。
 训练机器：machine2，request `s1-beat-b0-fm4-poststage4-2x2-20261101-v1`；冻结源码 `7edeac83708f955f22c7b72847f18abc36315d13`。
-结果：8/100，最终loss 0.0024，8771训练步；main和EMA严格重载及冻结B0检查通过。
+结果（已退役清理，仅保留历史统计）：8/100，最终loss 0.0024，8771训练步；main和EMA严格重载及冻结B0检查通过。
 
-- 训练权重：`/DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1/beat_block_hammer/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1`
-- 评测汇总：`/DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/beat_block_hammer/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1/main_nfe4_100_v1/result_machine2_verified.json`
-- 运行与审计：`/data/vepfs/licheng.yang/100HzS1/runs/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1`；`final_audit.json`
 - W&B：[正式run](https://wandb.ai/gonzalezmonica966-digua/100HzS1/runs/6aapwos1)，实际服务端 **FINISHED / 8771**。
 
 ## 融合后版本的实现与训练证据

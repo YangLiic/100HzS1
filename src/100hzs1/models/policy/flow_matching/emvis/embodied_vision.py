@@ -224,8 +224,7 @@ class EmVisRM(nn.Module):
             if target == 'TokenProjection':
                 if (self.backbone_target != 'efficientvit'
                         or not (self.backbone.stage4_repeats or self.backbone.mbconv_downsample_blocks)
-                        or self.compress_before_fusion
-                        or self.backbone.stage4_repeat_position == "post_fusion"):
+                        or self.compress_before_fusion):
                     raise ValueError("TokenProjection requires backbone downsampling and no ResNet compression")
                 adapter_class = TokenProjection
             elif target == 'ResNetAdapter':
@@ -242,12 +241,6 @@ class EmVisRM(nn.Module):
             )
             dim_now = model_adapter_config['dim_out']
             self.shape_out = model_adapter_config['shape_out']
-        if (self.backbone_target == "efficientvit"
-                and self.backbone.stage4_repeat_position == "post_fusion"):
-            if (self.efficientvit_fusion_mode != "native" or self.compress_before_fusion
-                    or not isinstance(self.model_adapter, ResNetAdapter)
-                    or len(self.model_adapter.downsample_blocks)):
-                raise ValueError("post_fusion stage4 requires native fusion and a pool-only ResNetAdapter")
         self.dim_out = dim_now
         self.output_projection = nn.Identity()
         if self.compress_before_fusion:
@@ -349,12 +342,6 @@ class EmVisRM(nn.Module):
 
         if self.mv_fuser is not None:
             scene_tokens = self.mv_fuser(scene_tokens)
-
-        if (self.backbone_target == "efficientvit"
-                and self.backbone.stage4_repeat_position == "post_fusion"):
-            compressed = self.backbone.repeat_stage4_tokens(scene_tokens, scene_pos)
-            scene_tokens = compressed['image_tokens']
-            scene_pos = compressed['image_tokens_pos']
 
         if self.compress_before_fusion:
             scene_features = self.output_projection(scene_tokens)

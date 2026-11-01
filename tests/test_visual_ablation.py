@@ -17,7 +17,7 @@ adapter = import_module('100hzs1.models.policy.flow_matching.emvis.adapter')
 POLICY = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_'
 NAMES = {'A': POLICY+'postfusion_2x2_fm_d1024_3v_8gpu_L4',
          'B': POLICY+'stage4repeat_2x3_fm_d2048_3v_8gpu_L4',
-         'C': POLICY+'poststage4_2x2_fm_d2048_3v_8gpu_L4'}
+         'C': POLICY+'stage4repeat_2x2_fm_d2048_3v_8gpu_L4'}
 
 
 def recipe(arm):
@@ -119,42 +119,40 @@ class VisualAblationTests(unittest.TestCase):
         obs={key:torch.rand(1,3,240,320) for key in first.rgb_key}
         with torch.no_grad():torch.testing.assert_close(restored(obs),first(obs),rtol=0,atol=0)
 
-    def test_postfusion_repeat_replaces_resblocks_but_preserves_pool_and_gradients(self):
-        m=scene('C').train();events=[];shapes=[]
-        hooks=[m.mv_fuser.register_forward_pre_hook(lambda mod,args:events.append(('fusion',tuple(args[0].shape)))),
-               m.backbone.model.stages[-1].register_forward_hook(lambda mod,args,out:events.append(('stage4',tuple(out.shape)))),
-               m.model_adapter.patch_merging.register_forward_pre_hook(lambda mod,args:shapes.append(tuple(args[0].shape)))]
-        bn_stats={n:b.running_mean.clone() for n,b in m.backbone.model.named_modules() if isinstance(b,nn.BatchNorm2d)}
+    def test_pool_follows_shared_repeats_before_fusion_and_adds_no_parameters(self):
+        legacy=scene('B');m=scene('C').train();events=[];pool_io=[]
+        m.load_state_dict(legacy.state_dict(),strict=True)
+        self.assertEqual(set(m.state_dict()),set(legacy.state_dict()))
+        self.assertEqual(sum(p.numel() for p in m.parameters()),sum(p.numel() for p in legacy.parameters()))
+        self.assertEqual(sum(p.numel() for p in m.backbone.stage4_pool.parameters()),0)
+        def record_pool(module,args,out):
+            events.append(('pool',tuple(out.shape)))
+            pool_io.append((args[0].detach().clone(),out.detach().clone()))
+        hooks=[m.backbone.model.stages[-1].register_forward_hook(lambda mod,args,out:events.append(('stage4',tuple(out.shape)))),
+               m.backbone.stage4_pool.register_forward_hook(record_pool),
+               m.mv_fuser.register_forward_pre_hook(lambda mod,args:events.append(('fusion',tuple(args[0].shape))))]
         try:
             out=m(torch.rand(1,3,3,240,320))
-            self.assertEqual(events,[('stage4',(3,128,8,10)),('fusion',(1,3,80,128)),
-                                     ('stage4',(3,128,4,5)),('stage4',(3,128,2,3))])
-            self.assertEqual(shapes,[(3,128,2,3)])
+            self.assertEqual(events,[('stage4',(3,128,8,10)),('stage4',(3,128,4,5)),
+                                     ('stage4',(3,128,2,3)),('pool',(3,128,2,2)),('fusion',(1,3,4,128))])
             self.assertEqual(out.shape,(1,3,4,1024))
-            self.assertIsInstance(m.model_adapter,adapter.ResNetAdapter)
-            self.assertEqual(len(m.model_adapter.downsample_blocks),0)
-            self.assertIs(m.model_adapter.patch_merging.adapter,nn.AdaptiveAvgPool2d)
-            self.assertEqual((m.model_adapter.patch_merging.proj.in_features,m.model_adapter.patch_merging.proj.out_features),(128,1024))
+            self.assertIsInstance(m.model_adapter,adapter.TokenProjection)
             self.assertFalse(any(isinstance(mod,adapter.ResBlock) for mod in m.modules()))
+            x,y=pool_io[0]
+            torch.testing.assert_close(y,nn.functional.adaptive_avg_pool2d(x,(2,2)),rtol=0,atol=0)
+            # For width3->2, PyTorch averages overlapping pairs [0,1] and [1,2].
+            torch.testing.assert_close(y[...,0],x[...,:2].mean(-1),rtol=0,atol=0)
+            torch.testing.assert_close(y[...,1],x[...,1:].mean(-1),rtol=0,atol=0)
             out.square().mean().backward()
-            for param in [m.backbone.stage4_repeat_projection.weight,next(m.mv_fuser.parameters())]:
+            for param in [m.backbone.stage4_repeat_projection.weight,next(m.mv_fuser.parameters()),m.model_adapter.proj.weight]:
                 self.assertIsNotNone(param.grad)
                 self.assertTrue(torch.isfinite(param.grad).all())
                 self.assertGreater(param.grad.abs().sum().item(),0)
             self.assertTrue(all(p.grad is None and not p.requires_grad for p in m.backbone.model.parameters()))
-            for n,b in m.backbone.model.named_modules():
-                if isinstance(b,nn.BatchNorm2d):
-                    self.assertFalse(b.training);torch.testing.assert_close(b.running_mean,bn_stats[n],rtol=0,atol=0)
-            self.assertEqual([n for n in m.state_dict() if 'stage4_repeat_projection' in n],['backbone.stage4_repeat_projection.weight'])
-            self.assertEqual(sum(p.numel() for p in m.backbone.stage4_repeat_projection.parameters()),8192)
-            # Exact pooling/projection contract, including the overlapping width bins.
-            features=torch.randn(3,128,2,3)
-            expected=m.model_adapter.patch_merging.proj(nn.functional.adaptive_avg_pool2d(features,(2,2)).permute(0,2,3,1))
-            torch.testing.assert_close(m.model_adapter.patch_merging(features,(2,2)),expected,rtol=0,atol=0)
         finally:
             for hook in hooks:hook.remove()
 
-    def test_postfusion_json_reload_and_invalid_double_compression(self):
+    def test_pooled_recipe_json_reload_and_invalid_pool_configuration(self):
         cfg=deepcopy(recipe('C')['model']['obs_encoder']['emvis_config']);cfg['load_backbone_pretrain']=False
         first=vision.VisualEncoder(emvis_config=cfg,rgb_key=['left_cam','right_cam','head_cam']).eval()
         second=vision.VisualEncoder(emvis_config=json.loads(json.dumps(cfg)),rgb_key=first.rgb_key).eval()
@@ -162,10 +160,45 @@ class VisualAblationTests(unittest.TestCase):
         self.assertEqual(second.output_shape_meta(),torch.Size([3,2,2,1024]))
         obs={key:torch.rand(1,3,240,320) for key in first.rgb_key}
         with torch.no_grad():torch.testing.assert_close(second(obs),first(obs),rtol=0,atol=0)
-        cfg['model_adapter_config']['conv_num']=2
-        with self.assertRaisesRegex(ValueError,'pool-only'):vision.EmVisRM(**cfg)
-        for position,repeats in [('bad',2),('post_fusion',0)]:
-            with self.assertRaises(ValueError):encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',stage4_repeats=repeats,stage4_repeat_position=position)
+        a,b=recipe('B'),recipe('C')
+        for key in ['train_dataset','seed','norm','num_train_epochs','train_batch_size','optimizer','horizon']:
+            self.assertEqual(a[key],b[key])
+        self.assertEqual(a['model']['hidden_size'],b['model']['hidden_size'])
+        self.assertEqual(b['model']['obs_encoder']['emvis_config']['backbone_config']['stage4_pool_shape'],[2,2])
+        self.assertEqual(a['model']['obs_encoder']['emvis_config']['model_adapter_config']['shape_out'],[2,3])
+        self.assertEqual(b['model']['obs_encoder']['emvis_config']['model_adapter_config']['shape_out'],[2,2])
+        self.assertNotEqual(a['output_dir'],b['output_dir'])
+        for shape in [[0,2],[2,True],[2],2,'2x2']:
+            with self.assertRaisesRegex(ValueError,'positive 2D'):
+                encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',stage4_repeats=2,stage4_pool_shape=shape)
+        with self.assertRaisesRegex(ValueError,'requires shared stage4'):
+            encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',stage4_pool_shape=[2,2])
+
+    def test_pooled_policy_fm4_cache_and_strict_reload_use_twelve_conditions(self):
+        module=import_module('100hzs1.models.policy.flow_matching.dit_fm_policy')
+        cfg=deepcopy(recipe('C')['model'])
+        cfg.update(hidden_size=64,depth=2,num_heads=4,horizon=4,n_action_steps=3)
+        cfg['obs_encoder']['emvis_config']['load_backbone_pretrain']=False
+        p=module.S1DitFlowMatching(module.S1DitFlowMatchingConfig(**cfg)).float().train()
+        p.model.dtype=p.model.t_embedder.dtype=torch.float32
+        p.normalizer.fit({'state':torch.randn(16,14),'action':torch.randn(16,14)})
+        nn.init.normal_(p.model.final_layer.ffn_final.fc2.weight,std=.02)
+        obs={k:torch.rand(1,1,3,240,320) for k in p.obs_encoder.rgb_key};obs['state']=torch.rand(1,1,14)
+        training_obs={**obs,'state':torch.rand(1,4,14)}
+        loss=p.compute_loss({'obs':training_obs,'action':{'action':torch.rand(1,4,14)}})
+        self.assertTrue(torch.isfinite(loss));loss.backward()
+        self.assertGreater(p.obs_encoder.scene_encoder.backbone.stage4_repeat_projection.weight.grad.abs().sum().item(),0)
+        p.eval();noise=torch.randn(1,4,14);times=[]
+        hook=p.model.register_forward_pre_hook(lambda m,args:times.append(int(args[1][0])))
+        with torch.no_grad():cached=p.predict_action(obs,noise_trajectory=noise,use_kv_cache=True,use_cuda_graph=False)
+        hook.remove();self.assertEqual(times,[0,250,500,750])
+        with torch.no_grad():plain=p.predict_action(obs,noise_trajectory=noise,use_kv_cache=False,use_cuda_graph=False)
+        torch.testing.assert_close(cached['action'],plain['action'],rtol=1e-5,atol=1e-6)
+        self.assertEqual(p.model.scene_cond_len,12)
+        q=module.S1DitFlowMatching(module.S1DitFlowMatchingConfig(**json.loads(p.config.to_json_string()))).float().eval()
+        q.load_state_dict(p.state_dict(),strict=True);q.model.dtype=q.model.t_embedder.dtype=torch.float32
+        with torch.no_grad():restored=q.predict_action(obs,noise_trajectory=noise,use_kv_cache=True,use_cuda_graph=False)
+        torch.testing.assert_close(restored['action'],cached['action'],rtol=0,atol=0)
 
     def test_legacy_encoder_has_no_extra_state_and_rejects_bad_repeat_counts(self):
         m=encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k')

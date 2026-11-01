@@ -13,7 +13,7 @@ class EfficientViTEncoder(nn.Module):
 
     def __init__(self, model_name="efficientvit_b2.r256_in1k", frozen=True,
                  stage4_repeats=0, mbconv_downsample_blocks=0,
-                 mbconv_downsample_init="stage4_local", stage4_repeat_position="backbone"):
+                 mbconv_downsample_init="stage4_local", stage4_pool_shape=None):
         super().__init__()
         import timm
 
@@ -24,11 +24,16 @@ class EfficientViTEncoder(nn.Module):
         if type(stage4_repeats) is not int or stage4_repeats < 0:
             raise ValueError("stage4_repeats must be a nonnegative integer")
         self.stage4_repeats = stage4_repeats
-        if stage4_repeat_position not in ("backbone", "post_fusion"):
-            raise ValueError("stage4_repeat_position must be 'backbone' or 'post_fusion'")
-        if stage4_repeat_position == "post_fusion" and not stage4_repeats:
-            raise ValueError("post_fusion requires positive stage4_repeats")
-        self.stage4_repeat_position = stage4_repeat_position
+        if stage4_pool_shape is not None:
+            if (not isinstance(stage4_pool_shape, (list, tuple)) or len(stage4_pool_shape) != 2
+                    or any(type(size) is not int or size <= 0 for size in stage4_pool_shape)):
+                raise ValueError("stage4_pool_shape must be a positive 2D shape")
+            if not stage4_repeats:
+                raise ValueError("stage4_pool_shape requires shared stage4 repeats")
+        self.stage4_pool_shape = tuple(stage4_pool_shape) if stage4_pool_shape is not None else None
+        # Stateless pooling is opt-in, preserving legacy six-token checkpoints.
+        self.stage4_pool = (nn.AdaptiveAvgPool2d(self.stage4_pool_shape)
+                            if self.stage4_pool_shape is not None else nn.Identity())
         if type(mbconv_downsample_blocks) is not int or mbconv_downsample_blocks < 0:
             raise ValueError("mbconv_downsample_blocks must be a nonnegative integer")
         if stage4_repeats and mbconv_downsample_blocks:
@@ -109,28 +114,17 @@ class EfficientViTEncoder(nn.Module):
             raise ValueError(f"Expected [B,V,3,H,W], got {tuple(images.shape)}")
         batch, views, channels, height, width = images.shape
         features = self.model.forward_features(images.reshape(-1, channels, height, width))
-        if self.stage4_repeat_position == "backbone":
-            features = self.repeat_stage4(features)
+        features = self.stage4_pool(self.repeat_stage4(features))
         for block in self.mbconv_downsample_layers:
             features = block(features)
         return self._tokens_from_features(features, batch, views)
 
     def repeat_stage4(self, features):
         # Reuse the original module without aliases/duplicate state keys. Do not
-        # use no_grad: post-fusion gradients must reach the fuser and bridge.
+        # use no_grad: gradients must reach the trainable shared bridge.
         for _ in range(self.stage4_repeats):
             features = self.model.stages[-1](self.stage4_repeat_projection(features))
         return features
-
-    def repeat_stage4_tokens(self, tokens, positions):
-        """Compress each fused view's preserved spatial grid, retaining autograd."""
-        batch, views, count, dim = tokens.shape
-        grid_h = int((positions[0, 0, :, 1] == 0).sum().item())
-        grid_w = int((positions[0, 0, :, 0] == 0).sum().item())
-        if grid_h * grid_w != count or dim != self.out_channels:
-            raise ValueError("Fused tokens must preserve the native EfficientViT spatial grid")
-        features = tokens.reshape(batch * views, grid_h, grid_w, dim).permute(0, 3, 1, 2).contiguous()
-        return self._tokens_from_features(self.repeat_stage4(features), batch, views)
 
     def _tokens_from_features(self, features, batch, views):
         _, dim, grid_h, grid_w = features.shape
