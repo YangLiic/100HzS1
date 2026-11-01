@@ -18,12 +18,19 @@ RGB_KEYS = ["left_cam", "right_cam", "head_cam"]
 def config(variant="b0", width=256, injection="tau_token"):
     OmegaConf.register_new_resolver("eval", eval, replace=True)
     suffix = "_adarms" if injection == "tau_AdaRMS" else ""
-    name = (f"backbones/efficientvit_{variant}/{injection}/"
-            f"100hzs1_beat_block_hammer_efficientvit_{variant}_prefusion_2x3_meanflow{suffix}_compact_3v_8gpu_L4")
+    # Keep low-level B0 coverage without retaining deleted B0 experiment YAMLs.
+    name = (f"backbones/efficientvit_b2/{injection}/"
+            f"100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow{suffix}_compact_3v_8gpu_L4")
     with initialize_config_dir(version_base=None, config_dir=str(ROOT / "configs/100hzs1_train")):
         cfg = compose(config_name=name, overrides=[f"model.hidden_size={width}"])
         OmegaConf.resolve(cfg)
-        return OmegaConf.to_container(cfg)
+        raw=OmegaConf.to_container(cfg)
+        if variant == "b0":
+            v=raw["model"]["obs_encoder"]["emvis_config"]
+            v["backbone_path"]=str(ROOT/"pretrained/efficientvit_b0.r224_in1k")
+            v["backbone_config"]["model_name"]="efficientvit_b0.r224_in1k"
+            raw["output_dir"]=raw["output_dir"].replace("efficientvit_b2", "efficientvit_b0")
+        return raw
 
 
 def make_policy(variant="b0", width=256, flow="meanflow", injection="tau_token"):

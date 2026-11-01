@@ -15,8 +15,8 @@ vision = import_module('100hzs1.models.policy.flow_matching.emvis.embodied_visio
 encoder = import_module('100hzs1.models.policy.flow_matching.emvis.encoder.efficientvit_encoder')
 adapter = import_module('100hzs1.models.policy.flow_matching.emvis.adapter')
 POLICY = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_'
-NAMES = {'A': POLICY+'postfusion_2x2_meanflow_d512_3v_8gpu_L4',
-         'B': POLICY+'stage4repeat_2x3_meanflow_d2048_3v_8gpu_L4'}
+NAMES = {'A': POLICY+'postfusion_2x2_fm_d1024_3v_8gpu_L4',
+         'B': POLICY+'stage4repeat_2x3_fm_d2048_3v_8gpu_L4'}
 
 
 def recipe(arm):
@@ -45,14 +45,16 @@ class VisualAblationTests(unittest.TestCase):
         self.assertEqual(a['train_batch_size'], 128)
         self.assertEqual(a['model']['meanflow'], b['model']['meanflow'])
         for arm, cfg, width, out_width, grid, repeats in [
-                ('A', a, 512, 256, [2,2], 0), ('B', b, 2048, 1024, [2,3], 2)]:
+                ('A', a, 1024, 512, [2,2], 0), ('B', b, 2048, 1024, [2,3], 2)]:
             m = cfg['model'];v = m['obs_encoder']['emvis_config']
             self.assertEqual(m['hidden_size'], width)
             self.assertEqual(m['num_heads'], width//64)
             self.assertEqual(m['scene_adaptor'], 'mlp2x_gelu')
             self.assertEqual(m['state_adaptor'], 'mlp3x_gelu')
             self.assertEqual(m['time_injection'], 'tau_token')
-            self.assertEqual(m['flow_type'], 'meanflow')
+            self.assertEqual(m['flow_type'], 'fm')
+            self.assertEqual(cfg['inference']['num_inference_timesteps'], 4)
+            self.assertEqual(m['noise_scheduler']['num_train_timesteps'], 1000)
             self.assertEqual(v['model_adapter_config']['shape_out'], grid)
             self.assertEqual(v['model_adapter_config']['dim_out'], out_width)
             self.assertEqual(v['backbone_config']['stage4_repeats'], repeats)
@@ -90,7 +92,7 @@ class VisualAblationTests(unittest.TestCase):
             handle.remove()
 
     def test_fusion_receives_original_grid_for_a_and_compressed_grid_for_b(self):
-        for arm, fusion_tokens, output_tokens, width in [('A',80,4,256),('B',6,6,1024)]:
+        for arm, fusion_tokens, output_tokens, width in [('A',80,4,512),('B',6,6,1024)]:
             with self.subTest(arm=arm):
                 m = scene(arm).eval();seen=[]
                 handle=m.mv_fuser.register_forward_pre_hook(lambda module,args:seen.append(tuple(args[0].shape)))

@@ -1,3 +1,9 @@
+> 2026-11-01 更新：旧 B0 降维/压缩实验 YAML 与产物已按要求删除。
+> 新 B0 实验使用标准 FM、4-step；仅做共享 stage4（非双 MBConv）压缩和
+> Linear128→512、sceneMLP512→1024→GELU→1024 降维。
+> 新入口见 configs/100hzs1_train/README.md 的 B0 controlled FM experiments。
+> 以下保留通用实现及历史结构验证说明，不表示重新启动旧 B0/MeanFlow 实验。
+
 # EfficientViT 融合前视觉 token 压缩
 
 新配置在每个视图独立完成空间压缩后，再进行多视角融合。使用现有
@@ -41,18 +47,17 @@ model_adapter_config:
   dim_out: 1024
 ```
 
-提供三个 observation 配置：
+保留以下 observation 配置（旧 B0 实验入口已按用户要求删除）：
 
-- `observation_config/efficientvit_b0_prefusion_2x3_3v.yaml`
 - `observation_config/efficientvit_b2_prefusion_2x3_3v.yaml`
 - `observation_config/efficientvit_b3_prefusion_2x3_3v.yaml`
 
-B0/B2 分别提供独立的 beat_block_hammer MeanFlow 训练入口：
+下面为仍保留的 B2 MeanFlow 入口示例；仅在明确要求 MeanFlow 时使用：
 
 ```bash
 # 仅打印启动命令，不提交训练。
 NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
-  configs/100hzs1_train/backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_3v_8gpu_L4.yaml \
+  configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow_3v_8gpu_L4.yaml \
   --dry-run
 ```
 
@@ -145,11 +150,11 @@ model:
         dim_out: ${model.hidden_size}
 ```
 
-compact 的 B0/B2 配方文件名在 `meanflow` 后增加 `_compact`，例如：
+保留的 B2 compact 配方文件名在 `meanflow` 后增加 `_compact`，例如：
 
 ```bash
 NUM_PROCESSES=8 GPU_IDS=0,1,2,3,4,5,6,7 scripts/train/train.sh \
-  configs/100hzs1_train/backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml \
+  configs/100hzs1_train/backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml \
   --dry-run
 ```
 
@@ -200,11 +205,10 @@ MeanFlow 的 t/r 两个时间嵌入器均为 sin/cos 频率特征 256 → Linear
 768 和 512 是多个调制参数拼接的总宽度，不改变 token 的 256 维隐藏表示。
 MeanFlow 连续时间仍使用 `time_embed_scale: 1.0`。
 
-B0/B2 均提供两种可直接选择的训练入口：
+B2 仍提供两种可直接选择的 compact 训练入口：
 
-- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml`
-- `backbones/efficientvit_b0/tau_AdaRMS/100hzs1_beat_block_hammer_efficientvit_b0_prefusion_2x3_meanflow_adarms_compact_3v_8gpu_L4.yaml`
-- B2 对应入口将路径和文件名中的 `b0` 替换为 `b2`。
+- `backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow_compact_3v_8gpu_L4.yaml`
+- `backbones/efficientvit_b2/tau_AdaRMS/100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow_adarms_compact_3v_8gpu_L4.yaml`
 
 AdaRMS 配方继承同一 compact 宽度、视觉结构和数据配方，只切换时间注入，
 使用独立的 `_adarms_d256_` 输出目录。选择 128/512 维对照时，所有时间注入层

@@ -57,7 +57,7 @@ that directory. Each mode has a separate checkpoint output directory. Override
 EfficientViT can compress each view to its natural 2x3 grid before multiview
 fusion with `compress_before_fusion: true`. This path uses two existing ResBlocks,
 skips adaptive pooling, and projects native channels to 1024 after fusion.
-B0/B2 recipes under `backbones/<backbone>/tau_token/` contain `prefusion_2x3`
+B2 recipes under `backbones/efficientvit_b2/tau_token/` contain `prefusion_2x3`
 in their filenames and use independent checkpoint output paths. B3 also has an
 observation profile. Existing recipes retain fusion before 2x2 compression.
 See [the dimensions, configuration and validation](../../docs/visual_token_compression.md).
@@ -65,8 +65,7 @@ See [the dimensions, configuration and validation](../../docs/visual_token_compr
 ## Compact policy width
 
 Recipes with `meanflow_compact` in their filenames align visual, state/action,
-time and DiT features at 256 dimensions. B0 uses a `128 -> 256 -> GELU -> 256`
-visual projector. The state/action encoder keeps all three Linear layers and
+time and DiT features at 256 dimensions. The compact visual projector aligns the backbone output to that width. The state/action encoder keeps all three Linear layers and
 both GELU activations, using `14 -> 256 -> 256 -> 256` instead of 2048-wide
 layers. The extra scene MLP is Identity because its input is already aligned.
 The DiT retains eight layers and uses four 64-dimensional heads.
@@ -77,7 +76,28 @@ Existing 2048-wide recipes remain unchanged. This is a new training architecture
 so these recipes use independent paths and do not resume old policy checkpoints.
 See [the full computation and validation](../../docs/visual_token_compression.md).
 
-Both `tau_token/` and `tau_AdaRMS/` have B0/B2 compact recipes. AdaRMS filenames
+Both `tau_token/` and `tau_AdaRMS/` retain B2 compact recipes. AdaRMS filenames
 use `meanflow_adarms_compact` and independent output paths. The shared hidden
 width also controls time embeddings, action-time fusion and every AdaRMS
 scale/shift/gate projection; no 2048-wide time path remains in compact models.
+
+## B0 controlled FM experiments
+
+B0 dimension/token-compression experiments use standard FM and four inference
+steps unless MeanFlow is explicitly requested. The old B0 MeanFlow experimental
+recipes and their local training/evaluation artifacts were removed by request.
+B0 pretrained weights, the native B0 profile, implementation code and other
+backbones remain available.
+
+- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4.yaml`:
+  original fusion and 2x2 compression; Linear128->512, flatten3x4=12,
+  scene MLP512->1024->GELU->1024; state/action/time/DiT1024.
+- `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_stage4repeat_2x3_fm_d2048_3v_8gpu_L4.yaml`:
+  two additional calls of the same frozen pretrained stage4 with one shared
+  trainable128->64 bridge, 6 tokens/view before fusion; Linear128->1024,
+  scene MLP1024->2048->GELU->2048; state/action/time/DiT2048.
+  No independent MBConv downsamplers and no adaptive2x2 pooling in this case.
+
+Both recipes retain beat_block_hammer, three views, min-max state/action,
+50 demonstrations, seed42, 200 epochs, BF16, tau_token, KV-on and Graph-off.
+They initialize new policy heads and have separate output paths.

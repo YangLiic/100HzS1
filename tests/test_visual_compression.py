@@ -33,13 +33,20 @@ def scene_config(variant="b0", before=True):
 
 
 def recipe(variant):
-    name = (f"backbones/efficientvit_{variant}/tau_token/"
-            f"100hzs1_beat_block_hammer_efficientvit_{variant}_prefusion_2x3_meanflow_3v_8gpu_L4")
+    # Derive B0 unit fixtures from the maintained B2 recipe after B0 cleanup.
+    name = ("backbones/efficientvit_b2/tau_token/"
+            "100hzs1_beat_block_hammer_efficientvit_b2_prefusion_2x3_meanflow_3v_8gpu_L4")
     OmegaConf.register_new_resolver("eval", eval, replace=True)
     with initialize_config_dir(version_base=None, config_dir=str(ROOT / "configs/100hzs1_train")):
         cfg = compose(config_name=name)
         OmegaConf.resolve(cfg)
-        return OmegaConf.to_container(cfg)
+        raw=OmegaConf.to_container(cfg)
+        if variant == "b0":
+            v=raw["model"]["obs_encoder"]["emvis_config"]
+            v["backbone_path"]=str(ROOT/"pretrained/efficientvit_b0.r224_in1k")
+            v["backbone_config"]["model_name"]="efficientvit_b0.r224_in1k"
+            raw["output_dir"]=raw["output_dir"].replace("efficientvit_b2", "efficientvit_b0")
+        return raw
 
 
 def small_policy():

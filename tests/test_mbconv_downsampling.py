@@ -16,12 +16,20 @@ ROOT=Path(__file__).resolve().parents[1]
 enc=import_module('100hzs1.models.policy.flow_matching.emvis.encoder.efficientvit_encoder')
 vis=import_module('100hzs1.models.policy.flow_matching.emvis.embodied_vision')
 pol=import_module('100hzs1.models.policy.flow_matching.dit_fm_policy')
-NAME='backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_mbconv2x_2x3_meanflow_d2048_3v_8gpu_L4'
+NAME='backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_3v_8gpu_L4'
 
 def config():
     OmegaConf.register_new_resolver('eval',eval,replace=True)
     with initialize_config_dir(version_base=None,config_dir=str(ROOT/'configs/100hzs1_train')):
-        return OmegaConf.to_container(compose(config_name=NAME),resolve=True)
+        cfg=OmegaConf.to_container(compose(config_name=NAME),resolve=True)
+    # Unit-test fixture: independent of deleted experimental training recipes.
+    v=cfg['model']['obs_encoder']['emvis_config']
+    v['backbone_path']=str(ROOT/'pretrained/efficientvit_b0.r224_in1k')
+    v['backbone_config']=dict(model_name='efficientvit_b0.r224_in1k',stage4_repeats=0,
+                            mbconv_downsample_blocks=2,mbconv_downsample_init='stage4_local')
+    v['compress_before_fusion']=False;v['output_projection_type']='linear'
+    v['model_adapter_config'].update(target='TokenProjection',shape_out=[2,3],dim_out=1024,conv_num=None)
+    return cfg
 
 class MBConvDownsamplingTests(unittest.TestCase):
     @classmethod
