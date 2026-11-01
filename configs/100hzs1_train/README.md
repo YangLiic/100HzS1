@@ -91,11 +91,11 @@ backbones remain available.
 
 - `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4.yaml`:
   original fusion and 2x2 compression; Linear128->512, flatten3x4=12,
-  scene MLP512->1024->GELU->1024; state/action/time/DiT1024.
+  scene MLP512->1024->GELU->1024; state/action/t/DiT1024 (standard FM has no r embedder).
 - `backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_stage4repeat_2x3_fm_d2048_3v_8gpu_L4.yaml`:
   two additional calls of the same frozen pretrained stage4 with one shared
   trainable128->64 bridge, 6 tokens/view before fusion; Linear128->1024,
-  scene MLP1024->2048->GELU->2048; state/action/time/DiT2048.
+  scene MLP1024->2048->GELU->2048; state/action/t/DiT2048 (standard FM has no r embedder).
   No independent MBConv downsamplers and no adaptive2x2 pooling in this case.
 
 Both recipes retain beat_block_hammer, three views, min-max state/action,
