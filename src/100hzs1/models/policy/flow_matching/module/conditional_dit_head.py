@@ -39,7 +39,6 @@ class DiT(nn.Module):
         flow_type="fm",
         time_injection="tau_token",
         n_obs_steps=1,
-        ffn_hidden_size=None,
     ):
         super().__init__()
         if time_injection not in {"tau_token", "tau_AdaRMS"}:
@@ -51,9 +50,6 @@ class DiT(nn.Module):
         self.use_final_layer = use_final_layer
         self.horizon = horizon
         self.hidden_size = hidden_size
-        if ffn_hidden_size is not None and (type(ffn_hidden_size) is not int or ffn_hidden_size <= 0):
-            raise ValueError("ffn_hidden_size must be a positive integer or None")
-        self.ffn_hidden_size = hidden_size if ffn_hidden_size is None else ffn_hidden_size
         self.scene_cond_len = scene_cond_len
         self.dtype = dtype
         self.scene_pos_embed_config = scene_pos_embed_config
@@ -71,7 +67,7 @@ class DiT(nn.Module):
         
         block_class = Block if time_injection == "tau_token" else AdaRMSBlock
         self.blocks = nn.ModuleList([
-            block_class(hidden_size, num_heads, self_attn_first, ffn_hidden_size=self.ffn_hidden_size) for _ in range(depth)
+            block_class(hidden_size, num_heads, self_attn_first) for _ in range(depth)
         ])
         if self.use_final_layer:
             self.final_layer = FinalLayer(hidden_size, output_dim)

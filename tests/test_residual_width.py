@@ -1,4 +1,4 @@
-"""Single-training residual visual adaptor and independent DiT FFN width."""
+"""Residual visual adaptor with fixed equal-width DiT FFNs."""
 from copy import deepcopy
 from importlib import import_module
 import json
@@ -13,7 +13,7 @@ policy = import_module('100hzs1.models.policy.flow_matching.dit_fm_policy')
 adapters = import_module('100hzs1.models.policy.flow_matching.module.condition_adapter')
 head = import_module('100hzs1.models.policy.flow_matching.module.conditional_dit_head')
 ROOT = Path(__file__).resolve().parents[1]
-NAME = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_resmlp_fm_d1024_ffn2048_3v_8gpu_L4'
+NAME = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_resmlp_fm_d1024_3v_8gpu_L4'
 
 
 def recipe():
@@ -22,11 +22,11 @@ def recipe():
         return OmegaConf.to_container(compose(config_name=NAME),resolve=True)
 
 
-def small_policy(injection='tau_token',flow='fm',wide=True):
+def small_policy(injection='tau_token',flow='fm',visual_residual=True):
     m=deepcopy(recipe()['model']);m.update(hidden_size=64,num_heads=1,depth=2,time_injection=injection,flow_type=flow)
-    if wide:m.update(ffn_hidden_size=128,scene_adaptor_hidden_size=128)
+    if visual_residual:m.update(scene_adaptor_hidden_size=128)
     else:
-        m.pop('ffn_hidden_size');m.pop('scene_adaptor_hidden_size');m['scene_adaptor']='mlp2x_gelu'
+        m.pop('scene_adaptor_hidden_size');m['scene_adaptor']='mlp2x_gelu'
     v=m['obs_encoder']['emvis_config'];v['load_backbone_pretrain']=False;v['model_adapter_config']['dim_out']=64
     p=policy.S1DitFlowMatching(policy.S1DitFlowMatchingConfig(**m)).float()
     p.model.dtype=p.model.t_embedder.dtype=torch.float32
@@ -42,7 +42,8 @@ class ResidualWidthTests(unittest.TestCase):
 
     def test_formal_recipe_and_legacy_widths(self):
         c=recipe();m=c['model'];v=m['obs_encoder']['emvis_config']
-        self.assertEqual((m['hidden_size'],m['ffn_hidden_size'],m['scene_adaptor_hidden_size'],m['num_heads'],m['depth']),(1024,2048,2048,16,8))
+        self.assertEqual((m['hidden_size'],m['scene_adaptor_hidden_size'],m['num_heads'],m['depth']),(1024,2048,16,8))
+        self.assertNotIn('ffn_hidden_size',m)
         self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu');self.assertEqual(m['state_adaptor'],'mlp3x_gelu')
         self.assertEqual(v['model_adapter_config']['dim_out'],1024);self.assertEqual(v['model_adapter_config']['shape_out'],[2,2])
         self.assertEqual(v['model_adapter_config']['conv_num'],2);self.assertEqual(v['backbone_config']['stage4_repeats'],0)
@@ -65,7 +66,7 @@ class ResidualWidthTests(unittest.TestCase):
         for injection,flow in [('tau_token','fm'),('tau_AdaRMS','fm'),('tau_token','meanflow'),('tau_AdaRMS','meanflow')]:
             with self.subTest(injection=injection,flow=flow):
                 p=small_policy(injection,flow);D=64;t=torch.ones(1);r=torch.zeros(1) if flow=='meanflow' else None
-                self.assertEqual([(b.ffn.fc1.in_features,b.ffn.fc1.out_features,b.ffn.fc2.out_features) for b in p.model.blocks],[(64,128,64)]*2)
+                self.assertEqual([(b.ffn.fc1.in_features,b.ffn.fc1.out_features,b.ffn.fc2.out_features) for b in p.model.blocks],[(64,64,64)]*2)
                 self.assertEqual([(x.in_features,x.out_features) for x in p.state_adaptor if isinstance(x,nn.Linear)],[(14,64),(64,64),(64,64)])
                 self.assertEqual(p.model.t_embedder.mlp[-1].out_features,D)
                 if flow=='meanflow':self.assertEqual(p.model.r_embedder.mlp[-1].out_features,D)
@@ -89,13 +90,46 @@ class ResidualWidthTests(unittest.TestCase):
                 with torch.no_grad():torch.testing.assert_close(restored.model(x,t,conditions,r=r),plain,rtol=0,atol=0)
 
     def test_old_configs_default_to_original_ffn_and_state_layout(self):
-        old=small_policy(wide=False)
+        old=small_policy(visual_residual=False)
         self.assertEqual([b.ffn.fc1.out_features for b in old.model.blocks],[64,64])
         self.assertFalse(any('scene_adaptor.norm.' in key for key in old.state_dict()))
-        restored=small_policy(wide=False);restored.load_state_dict(old.state_dict(),strict=True)
-        for bad in [-1,0,True,1.5]:
-            with self.assertRaisesRegex(ValueError,'ffn_hidden_size'):
-                head.DiT(14,24,hidden_size=64,depth=1,num_heads=1,scene_cond_len=12,scene_pos_embed_config=[('image',(1,3,4))],ffn_hidden_size=bad)
+        restored=small_policy(visual_residual=False);restored.load_state_dict(old.state_dict(),strict=True)
+
+    def test_retired_ffn_width_cannot_be_set_by_config_or_constructor(self):
+        self.assertNotIn('ffn_hidden_size',policy.S1DitFlowMatchingConfig.__dataclass_fields__)
+        cfg=deepcopy(recipe()['model'])
+        legacy=policy.S1DitFlowMatchingConfig(**dict(cfg,ffn_hidden_size=None))
+        self.assertNotIn('ffn_hidden_size',legacy.to_dict())
+        for value in [-1,0,True,1.5,1024,2048]:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError,'fixed to hidden_size'):
+                    policy.S1DitFlowMatchingConfig(**dict(cfg,ffn_hidden_size=value))
+                with self.assertRaises(TypeError):
+                    head.DiT(14,24,hidden_size=64,depth=1,num_heads=1,ffn_hidden_size=value)
+                with self.assertRaises(TypeError):
+                    head.Block(64,1,ffn_hidden_size=value)
+                with self.assertRaises(TypeError):
+                    head.AdaRMSBlock(64,1,ffn_hidden_size=value)
+
+    def test_real_1024_and_2048_dit_blocks_keep_ffn_equal_to_hidden_width(self):
+        for width in [1024,2048]:
+            for cls in [head.Block,head.AdaRMSBlock]:
+                with self.subTest(width=width,block=cls.__name__):
+                    block=cls(width,width//64)
+                    self.assertEqual((block.ffn.fc1.in_features,block.ffn.fc1.out_features,
+                                      block.ffn.fc2.in_features,block.ffn.fc2.out_features),
+                                     (width,width,width,width))
+                    self.assertIsInstance(block.ffn.act,nn.GELU)
+                    del block
+
+    def test_wide_ffn_checkpoint_tensors_are_not_silently_loaded(self):
+        first=small_policy();state=first.state_dict()
+        state['model.blocks.0.ffn.fc1.weight']=torch.zeros(128,64)
+        state['model.blocks.0.ffn.fc1.bias']=torch.zeros(128)
+        state['model.blocks.0.ffn.fc2.weight']=torch.zeros(64,128)
+        with self.assertRaisesRegex(RuntimeError,'size mismatch'):
+            small_policy().load_state_dict(state,strict=True)
+
 
 
 if __name__=='__main__':unittest.main()

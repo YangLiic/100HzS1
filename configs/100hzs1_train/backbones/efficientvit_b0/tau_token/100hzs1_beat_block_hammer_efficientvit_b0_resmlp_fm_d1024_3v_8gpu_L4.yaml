@@ -1,5 +1,5 @@
 # @package _global_
-# One ordinary FM training: 1024 token stream, 2048 internal FFNs. No teacher.
+# DiT FFNs are fixed in code to the 1024 token width; visual residual MLP remains 2048 inside.
 defaults:
   - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4
   - _self_
@@ -7,7 +7,6 @@ defaults:
 model:
   hidden_size: 1024
   num_heads: 16
-  ffn_hidden_size: 2048
   scene_adaptor: residual_mlp2x_gelu
   scene_adaptor_hidden_size: 2048
   obs_encoder:
@@ -16,7 +15,7 @@ model:
         dim_out: 1024
 
 resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_resmlp_d1024_ffn2048_20261101_v1
+output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_resmlp_d1024_20261101_v1
 base_dir: ${output_dir}
 hydra:
   run:

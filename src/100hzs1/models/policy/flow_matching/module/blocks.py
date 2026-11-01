@@ -243,11 +243,8 @@ class Block(nn.Module):
     """
     A RDT block with cross-attention conditioning.
     """
-    def __init__(self, hidden_size, num_heads, self_attn_first=True, ffn_hidden_size=None, **block_kwargs):
+    def __init__(self, hidden_size, num_heads, self_attn_first=True, **block_kwargs):
         super().__init__()
-        if ffn_hidden_size is not None and (type(ffn_hidden_size) is not int or ffn_hidden_size <= 0):
-            raise ValueError("ffn_hidden_size must be a positive integer or None")
-        self.ffn_hidden_size = hidden_size if ffn_hidden_size is None else ffn_hidden_size
         self.norm1 = RmsNorm(hidden_size, eps=1e-6)
         self.self_attn_first = self_attn_first
         self.attn = Attention(
@@ -262,7 +259,7 @@ class Block(nn.Module):
         self.norm2 = RmsNorm(hidden_size, eps=1e-6)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
         self.ffn = Mlp(in_features=hidden_size, 
-            hidden_features=self.ffn_hidden_size,
+            hidden_features=hidden_size,
             act_layer=approx_gelu, drop=0)
         self.norm3 = RmsNorm(hidden_size, eps=1e-6)
 
@@ -299,8 +296,8 @@ class AdaRMSBlock(Block):
     are shared across sequence positions, not across sublayers or blocks.
     """
 
-    def __init__(self, hidden_size, num_heads, self_attn_first=True, ffn_hidden_size=None):
-        super().__init__(hidden_size, num_heads, self_attn_first, ffn_hidden_size=ffn_hidden_size)
+    def __init__(self, hidden_size, num_heads, self_attn_first=True):
+        super().__init__(hidden_size, num_heads, self_attn_first)
         self.modulations = nn.ModuleList([
             nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 3 * hidden_size))
             for _ in range(3)

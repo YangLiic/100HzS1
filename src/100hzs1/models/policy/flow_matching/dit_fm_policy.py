@@ -52,11 +52,15 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     flow_type: str = "fm"
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
-    ffn_hidden_size: Optional[int] = None
     scene_adaptor_hidden_size: Optional[int] = None
     
 
     def __init__(self, *args, **kwargs):
+        # Only migrate legacy null metadata; independent FFN widths are retired.
+        legacy_ffn_width = kwargs.pop("ffn_hidden_size", None)
+        if legacy_ffn_width is not None:
+            raise ValueError("DiT FFN width is fixed to hidden_size; "
+                             "ffn_hidden_size is no longer supported")
         # Migrate old configs/checkpoints; serialize only the canonical state_key.
         legacy_state_key = kwargs.pop("action_key", None)
         state_key = kwargs.get("state_key")
@@ -128,7 +132,6 @@ def create_dit_model(
         flow_type=getattr(config, "flow_type", "fm"),
         time_injection=getattr(config, "time_injection", "tau_token"),
         n_obs_steps=config.n_obs_steps,
-        ffn_hidden_size=getattr(config, "ffn_hidden_size", None),
     )
 
 class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
@@ -199,7 +202,6 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
             flow_type=self.flow_type,
             time_injection=config.time_injection,
             n_obs_steps=n_obs_steps,
-            ffn_hidden_size=getattr(config, "ffn_hidden_size", None),
         )
 
         self.scene_adaptor = self.build_condition_adapter(
