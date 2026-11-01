@@ -13,3 +13,11 @@ New YAML: configs/100hzs1_train/backbones/efficientvit_b0/tau_token/100hzs1_beat
 CPU regression tests exercise operation order80-token fusion before both repeats, natural2x3 input to unchanged2x2pool/projection, nonzero finite bridge/fuser gradients, frozen B0/BN, singleton shared parameter registration, JSON config strict reload, invalid double-compression rejection, and legacy before-fusion behavior. Launch evidence and final results are recorded under the campaign run root.
 
 Pre-launch CPU regression: 28 tests passed across visual ablation(7), visual compression(8), compact policy and independent MBConv legacy tests(13). No GPU used on the shared development machine.
+
+## Final audited result
+
+Completed 8771 training steps, final loss0.0024. Finalmain/EMA strict reload, frozen B0 and actual FM4/order/pooling checks passed. Finalmain closed-loop **8/100**, shards2+3+2+1, exactly100pinnedseeds and100nonemptyvideos. Request succeeded exit0 at2026-11-01T14:03:30UTC andmachine2returnedholding. W&B6aapwos1 FINISHED8771.
+
+Full audit: runs/beat_b0_fm4_postfusion_stage4_2x2_20261101_v1/final_audit.json. Four-way report: docs/beat_b0_fm4_four_way_results_20261101.md.
+
+Aggregate metadata originally inherited machine1 label from a dispatcher literal. Actual sealedplan/request/supervisor/evaleventhostname prove machine2 execution. Original result.json and frozen dispatcher preserved; new result_machine2_verified.json corrects only this label and adds provenance hashes, with all episode/video/checkpoint/seed fields unchanged. The full auditor verifies this correction and recomputes8successes from100rows. No rerun/source/config/weight changes.

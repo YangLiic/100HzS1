@@ -37,7 +37,7 @@ Eval: /DRoboticsAILab/users/licheng.yang/robotwin2.0/100HzS1/beat_block_hammer/b
 | 原始融合后两ResBlock+2x2池化 baseline | 2048 | 4 | **52/100** |
 | 原压缩模块，Linear128->512、scene512->1024->1024 | 1024 | 4 | 22/100 |
 | 融合前共享stage4额外两次，无末端池化 | 2048 | 6 | 48/100 |
-| 融合后共享stage4替换两ResBlock，保留2x2池化 | 2048 | 4 | machine2训练中 |
+| 融合后共享stage4替换两ResBlock，保留2x2池化 | 2048 | 4 | 8/100 |
 
 Baseline训练完成8771步，最终loss0.00115，用时37:30。最终main和EMA均严格
 重载通过，冻结B0在各自保存精度下匹配预训练；实际FM四次DiT前向为
@@ -57,3 +57,5 @@ W&B: https://wandb.ai/gonzalezmonica966-digua/100HzS1/runs/3dvbn2u7 ，
 
 machine2最新融合后替换组独立继续；不重复启动已完成实验，不停止共享
 W&B转发和巡检，待第四组最终审计完成后统一收尾。代码及报告未push。
+
+第四组已全部完成8/100；最终四组报告见 docs/beat_b0_fm4_four_way_results_20261101.md。
