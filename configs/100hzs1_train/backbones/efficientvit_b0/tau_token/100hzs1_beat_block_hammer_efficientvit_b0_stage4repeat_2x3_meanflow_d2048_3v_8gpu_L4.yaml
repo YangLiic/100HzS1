@@ -1,0 +1,20 @@
+# @package _global_
+# B: retain original 1024/2048 widths; replace compression with shared stage4 repeats.
+defaults:
+  - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_3v_8gpu_L4
+  - /observation_config/efficientvit_b0_stage4_repeat_2x3_3v
+  - _self_
+
+model:
+  hidden_size: 2048
+  num_heads: 32
+  scene_adaptor: mlp2x_gelu
+  state_adaptor: mlp3x_gelu
+  time_injection: tau_token
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b0_stage4repeat_2x3_meanflow_d2048_3v_obs1_h24_8gpu_L4
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

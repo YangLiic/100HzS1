@@ -7,7 +7,7 @@ from torch import Tensor, nn
 from ..common.module_attr_mixin import ModuleAttrMixin
 
 from .utils import format_number, preprocess_images, param_count
-from .adapter import ResNetAdapter
+from .adapter import ResNetAdapter, TokenProjection
 from .mv_fuser import MultiViewFuser
 from .inference_cuda_graph import BackboneCudaGraph
 
@@ -212,7 +212,7 @@ class EmVisRM(nn.Module):
         else:
             self.mv_fuser = None
 
-        # initialize model adapter (ResNetAdapter only)
+        # Legacy spatial adapter or a projection of backbone-compressed tokens.
         self.shape_out = None
         self.model_adapter = None
         if model_adapter_config:
@@ -220,10 +220,17 @@ class EmVisRM(nn.Module):
                 'dim_in': dim_now,
                 **model_adapter_config
             }
-            assert model_adapter_config.get('target', 'ResNetAdapter') == 'ResNetAdapter', (
-                "model_adapter must be ResNetAdapter"
-            )
-            self.model_adapter = ResNetAdapter(
+            target = model_adapter_config.get('target', 'ResNetAdapter')
+            if target == 'TokenProjection':
+                if (self.backbone_target != 'efficientvit' or not self.backbone.stage4_repeats
+                        or self.compress_before_fusion):
+                    raise ValueError("TokenProjection requires stage4 repeats and no ResNet compression")
+                adapter_class = TokenProjection
+            elif target == 'ResNetAdapter':
+                adapter_class = ResNetAdapter
+            else:
+                raise ValueError(f"Unsupported model adapter: {target!r}")
+            self.model_adapter = adapter_class(
                 dim_in=model_adapter_config['dim_in'],
                 dim_out=model_adapter_config['dim_out'],
                 shape_out=model_adapter_config['shape_out'],

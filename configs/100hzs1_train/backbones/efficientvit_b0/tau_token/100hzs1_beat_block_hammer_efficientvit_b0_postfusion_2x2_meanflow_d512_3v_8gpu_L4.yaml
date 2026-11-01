@@ -1,0 +1,24 @@
+# @package _global_
+# A: only reduce widths; retain the original post-fusion 2x2 compression.
+defaults:
+  - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_meanflow_3v_8gpu_L4
+  - /observation_config/efficientvit_b0_native_3v
+  - _self_
+
+model:
+  hidden_size: 512
+  num_heads: 8
+  scene_adaptor: mlp2x_gelu
+  state_adaptor: mlp3x_gelu
+  time_injection: tau_token
+  obs_encoder:
+    emvis_config:
+      model_adapter_config:
+        dim_out: 256
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b0_postfusion_2x2_meanflow_d512_3v_obs1_h24_8gpu_L4
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

@@ -202,3 +202,24 @@ class ResNetAdapter(nn.Module):
         C = x.shape[-1]
         x = x.view(B, -1, C) # [B, *H_W, C_Out]
         return x
+
+
+class TokenProjection(nn.Module):
+    """Project an already compressed token grid without pooling/downsampling."""
+
+    def __init__(self, dim_in, dim_out, shape_out, drop=0.0, **kwargs):
+        super().__init__()
+        if (len(shape_out) != 2 or any(type(x) is not int or x <= 0 for x in shape_out)):
+            raise ValueError("TokenProjection requires a positive 2D shape_out")
+        self.shape_out = tuple(shape_out)
+        self.proj = nn.Linear(dim_in, dim_out)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, tokens, positions, spatial_only=False):
+        if spatial_only:
+            raise ValueError("TokenProjection has no spatial compression operation")
+        if tokens.shape[-2] != self.shape_out[0] * self.shape_out[1]:
+            raise ValueError("Backbone token grid does not match TokenProjection.shape_out")
+        if positions.shape != (*tokens.shape[:-1], 2):
+            raise ValueError("Token positions do not match the backbone token grid")
+        return self.drop(self.proj(tokens))
