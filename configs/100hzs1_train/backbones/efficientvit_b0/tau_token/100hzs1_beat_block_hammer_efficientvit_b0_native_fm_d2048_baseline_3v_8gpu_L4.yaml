@@ -1,0 +1,20 @@
+# @package _global_
+# Original B0 baseline: same standard FM4 recipe, restore only native widths.
+defaults:
+  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_fm_d1024_3v_8gpu_L4
+  - _self_
+
+model:
+  hidden_size: 2048
+  num_heads: 32
+  obs_encoder:
+    emvis_config:
+      model_adapter_config:
+        dim_out: 1024
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/beat_b0_fm4_native_d2048_baseline_20261101_v1
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra
