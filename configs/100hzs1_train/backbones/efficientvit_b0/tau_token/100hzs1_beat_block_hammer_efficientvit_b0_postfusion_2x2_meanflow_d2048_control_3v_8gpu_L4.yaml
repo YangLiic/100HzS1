@@ -1,0 +1,19 @@
+# @package _global_
+# Restore default widths through configuration only; preserve the original 2x2 path.
+defaults:
+  - /backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_postfusion_2x2_meanflow_d1024_3v_8gpu_L4
+  - _self_
+
+model:
+  hidden_size: 2048
+  num_heads: 32
+  obs_encoder:
+    emvis_config:
+      model_adapter_config:
+        dim_out: 1024
+
+output_dir: ${checkpoint_root}/beat_block_hammer/efficientvit_b0_postfusion_2x2_meanflow_d2048_control_3v_obs1_h24_8gpu_L4
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra
