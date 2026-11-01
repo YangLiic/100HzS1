@@ -222,9 +222,10 @@ class EmVisRM(nn.Module):
             }
             target = model_adapter_config.get('target', 'ResNetAdapter')
             if target == 'TokenProjection':
-                if (self.backbone_target != 'efficientvit' or not self.backbone.stage4_repeats
+                if (self.backbone_target != 'efficientvit'
+                        or not (self.backbone.stage4_repeats or self.backbone.mbconv_downsample_blocks)
                         or self.compress_before_fusion):
-                    raise ValueError("TokenProjection requires stage4 repeats and no ResNet compression")
+                    raise ValueError("TokenProjection requires backbone downsampling and no ResNet compression")
                 adapter_class = TokenProjection
             elif target == 'ResNetAdapter':
                 adapter_class = ResNetAdapter

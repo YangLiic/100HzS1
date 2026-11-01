@@ -1,4 +1,5 @@
 """MIT EfficientViT spatial features with 100HzS1's multiview token contract."""
+from copy import deepcopy
 from pathlib import Path
 
 import torch
@@ -6,11 +7,13 @@ from torch import nn
 
 
 class EfficientViTEncoder(nn.Module):
-    """Spatial trunk with optional weight-shared stage4 downsampling repeats."""
+    """Spatial trunk with optional shared-stage or independent MBConv downsampling."""
 
     patch_size_log = 32
 
-    def __init__(self, model_name="efficientvit_b2.r256_in1k", frozen=True, stage4_repeats=0):
+    def __init__(self, model_name="efficientvit_b2.r256_in1k", frozen=True,
+                 stage4_repeats=0, mbconv_downsample_blocks=0,
+                 mbconv_downsample_init="stage4_local"):
         super().__init__()
         import timm
 
@@ -21,6 +24,14 @@ class EfficientViTEncoder(nn.Module):
         if type(stage4_repeats) is not int or stage4_repeats < 0:
             raise ValueError("stage4_repeats must be a nonnegative integer")
         self.stage4_repeats = stage4_repeats
+        if type(mbconv_downsample_blocks) is not int or mbconv_downsample_blocks < 0:
+            raise ValueError("mbconv_downsample_blocks must be a nonnegative integer")
+        if stage4_repeats and mbconv_downsample_blocks:
+            raise ValueError("Choose stage4 repeats or independent MBConv downsampling, not both")
+        if mbconv_downsample_init != "stage4_local":
+            raise ValueError("mbconv_downsample_init must be 'stage4_local'")
+        self.mbconv_downsample_blocks = mbconv_downsample_blocks
+        self.mbconv_downsample_init = mbconv_downsample_init
         # No implicit network request: pretrained weights are loaded explicitly.
         self.model = timm.create_model(model_name, pretrained=False)
         if not type(self.model).__module__.endswith("efficientvit_mit"):
@@ -37,6 +48,21 @@ class EfficientViTEncoder(nn.Module):
             # pretrained trunk, and adds no spatial pooling or activation.
             stage4_in = self.model.stages[-1].blocks[0].main.inverted_conv.conv.in_channels
             self.stage4_repeat_projection = nn.Conv2d(self.out_channels, stage4_in, 1, bias=False)
+        self.mbconv_downsample_layers = nn.ModuleList()
+        if self.mbconv_downsample_blocks:
+            sources = self.model.stages[-1].blocks[1:]
+            if self.mbconv_downsample_blocks > len(sources):
+                raise ValueError("Not enough stage4 local MBConv blocks for independent initialization")
+            for source in sources[:self.mbconv_downsample_blocks]:
+                # Copy only MBConv, without its stride-1 identity residual or
+                # LiteMLA. Each copy owns independent trainable parameters.
+                local = source.local_module.main
+                if (local.inverted_conv.conv.in_channels != self.out_channels
+                        or local.point_conv.conv.out_channels != self.out_channels):
+                    raise ValueError("Stage4 local MBConv must preserve the native channel width")
+                block = deepcopy(local).requires_grad_(True)
+                block.depth_conv.conv.stride = (2, 2)
+                self.mbconv_downsample_layers.append(block)
         self.train(not self.frozen)
 
     def load_pretrained_model(self, model_name, freeze=True):
@@ -51,6 +77,13 @@ class EfficientViTEncoder(nn.Module):
         # timm checkpoints include a classifier; 100HzS1 uses only its spatial trunk.
         state = {key: value for key, value in state.items() if not key.startswith("head.")}
         self.model.load_state_dict(state, strict=True)
+        # The constructor precedes explicit pretrained loading. Refresh copied
+        # initializers HERE so they receive pretrained, not random trunk weights.
+        # Checkpoint reload sets load_backbone_pretrain=False and restores the
+        # learned copies strictly instead of reinitializing them.
+        for index, block in enumerate(self.mbconv_downsample_layers):
+            source = self.model.stages[-1].blocks[index + 1].local_module.main
+            block.load_state_dict(source.state_dict(), strict=True)
         self.frozen = bool(freeze)
         self.model.requires_grad_(not self.frozen)
         self.train(self.training)
@@ -61,6 +94,7 @@ class EfficientViTEncoder(nn.Module):
         super().train(bool(mode) and not self.frozen)
         if self.stage4_repeat_projection is not None:
             self.stage4_repeat_projection.train(bool(mode))
+        self.mbconv_downsample_layers.train(bool(mode))
         return self
 
     def forward(self, images):
@@ -75,6 +109,8 @@ class EfficientViTEncoder(nn.Module):
             # stage4 parameters/state keys. Gradients pass through frozen ops
             # to the trainable bridge; pretrained BatchNorm stays in eval.
             features = self.model.stages[-1](self.stage4_repeat_projection(features))
+        for block in self.mbconv_downsample_layers:
+            features = block(features)
         _, dim, grid_h, grid_w = features.shape
         tokens = features.flatten(2).transpose(1, 2).reshape(batch, views, grid_h * grid_w, dim)
         key = (grid_h, grid_w, features.device.type, features.device.index)
