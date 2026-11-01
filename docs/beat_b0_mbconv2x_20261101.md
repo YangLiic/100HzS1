@@ -13,3 +13,5 @@ DiT 保持 2048 维、8 层、32 heads；state/action MLP 保持 14→2048→204
 配置入口：`configs/100hzs1_train/backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_mbconv2x_2x3_meanflow_d2048_3v_8gpu_L4.yaml`。
 
 验证：6 项新增 CPU 测试覆盖配置、预训练复制与参数独立性、两次真实 MeanFlow 更新的梯度、尺寸与归一化模式、融合 token 数、严格重载；22 项已有视觉和 compact policy 回归测试通过。提交后以 git archive 冻结源码；正式训练使用独立输出路径和单一 machine2 request。结果另行记录，不覆盖旧实验。
+
+补充：八卡短测时核查发现 EMA 原有实现只更新参数，不同步 BatchNorm 的运行均值、方差、计数。新增可训练 MBConv 需要这些统计，因此同步 BN buffers。原冻结 B0 的 main 权重必须与预训练逐位相等，EMA 按原有 BF16 保存精度与预训练转换后的值精确比较。首次短测产物保留，新 request/output 重新验证。
