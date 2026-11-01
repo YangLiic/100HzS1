@@ -13,7 +13,7 @@ policy = import_module('100hzs1.models.policy.flow_matching.dit_fm_policy')
 adapters = import_module('100hzs1.models.policy.flow_matching.module.condition_adapter')
 head = import_module('100hzs1.models.policy.flow_matching.module.conditional_dit_head')
 ROOT = Path(__file__).resolve().parents[1]
-NAME = 'backbones/efficientvit_b0/tau_token/100hzs1_beat_block_hammer_efficientvit_b0_resmlp_fm_d1024_3v_8gpu_L4'
+NAME = 'backbones/efficientvit_b0/tau_token/b0_rms_fm4'
 
 
 def recipe():
@@ -24,10 +24,12 @@ def recipe():
 
 def small_policy(injection='tau_token',flow='fm',visual_residual=True):
     m=deepcopy(recipe()['model']);m.update(hidden_size=64,num_heads=1,depth=2,time_injection=injection,flow_type=flow)
-    if visual_residual:m.update(scene_adaptor_hidden_size=128)
-    else:
-        m.pop('scene_adaptor_hidden_size');m['scene_adaptor']='mlp2x_gelu'
-    v=m['obs_encoder']['emvis_config'];v['load_backbone_pretrain']=False;v['model_adapter_config']['dim_out']=64
+    m.pop('visual_variant',None)
+    if not visual_residual:m['scene_adaptor']='mlp2x_gelu'
+    v=m['obs_encoder']['emvis_config'];v['visual_variant']='baseline'
+    # Generic non-B0 unit fixture keeps tiny heads; B0 presets reject arbitrary widths.
+    v['backbone_config']['model_name']='efficientvit_b2.r256_in1k'
+    v['load_backbone_pretrain']=False;v['model_adapter_config']['dim_out']=64
     p=policy.S1DitFlowMatching(policy.S1DitFlowMatchingConfig(**m)).float()
     p.model.dtype=p.model.t_embedder.dtype=torch.float32
     if p.model.r_embedder is not None:p.model.r_embedder.dtype=torch.float32
@@ -42,24 +44,24 @@ class ResidualWidthTests(unittest.TestCase):
 
     def test_formal_recipe_and_legacy_widths(self):
         c=recipe();m=c['model'];v=m['obs_encoder']['emvis_config']
-        self.assertEqual((m['hidden_size'],m['scene_adaptor_hidden_size'],m['num_heads'],m['depth']),(1024,2048,16,8))
+        self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8))
         self.assertNotIn('ffn_hidden_size',m)
         self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu');self.assertEqual(m['state_adaptor'],'mlp3x_gelu')
         self.assertEqual(v['model_adapter_config']['dim_out'],1024);self.assertEqual(v['model_adapter_config']['shape_out'],[2,2])
-        self.assertEqual(v['model_adapter_config']['conv_num'],2);self.assertEqual(v['backbone_config']['stage4_repeats'],0)
+        self.assertEqual(v['model_adapter_config']['conv_num'],2);self.assertEqual(m['visual_variant'],'rms')
         self.assertEqual(m['flow_type'],'fm');self.assertEqual(c['inference']['num_inference_timesteps'],4)
         self.assertEqual((c['norm'],c['seed'],c['num_train_epochs'],c['train_batch_size']),('minmax',42,200,128))
         self.assertIsNone(c['resume_from_checkpoint'])
 
     def test_residual_norm_is_only_on_branch(self):
-        a=adapters.ResidualMLPAdapter(64,64,128);x=torch.randn(2,12,64,requires_grad=True)
+        a=adapters.ResidualMLPAdapter(64,64);x=torch.randn(2,12,64,requires_grad=True)
         expected=x+a.fc2(a.act(a.fc1(a.norm(x))))
         torch.testing.assert_close(a(x),expected,rtol=0,atol=0)
         a(x).square().mean().backward()
         for p in a.parameters():self.assertTrue(torch.isfinite(p.grad).all());self.assertGreater(float(p.grad.abs().sum()),0)
         nn.init.zeros_(a.fc2.weight);nn.init.zeros_(a.fc2.bias)
         torch.testing.assert_close(a(x),x,rtol=0,atol=0)
-        for dims in [(32,64,128),(64,64,0),(64,64,True)]:
+        for dims in [(32,64)]:
             with self.assertRaises(ValueError):adapters.ResidualMLPAdapter(*dims)
 
     def test_both_time_modes_and_flows_gradients_cached_equivalence_and_strict_reload(self):

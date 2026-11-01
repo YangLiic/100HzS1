@@ -1,48 +1,25 @@
-"""MIT EfficientViT spatial features with 100HzS1's multiview token contract."""
-from copy import deepcopy
+"""Frozen EfficientViT features with the supported shared-stage4 compression."""
 from pathlib import Path
-
 import torch
 from torch import nn
+from ...visual_variants import STAGE4_VARIANTS, validate_visual_variant
 
 
 class EfficientViTEncoder(nn.Module):
-    """Spatial trunk with optional shared-stage or independent MBConv downsampling."""
-
     patch_size_log = 32
 
     def __init__(self, model_name="efficientvit_b2.r256_in1k", frozen=True,
-                 stage4_repeats=0, mbconv_downsample_blocks=0,
-                 mbconv_downsample_init="stage4_local", stage4_pool_shape=None):
+                 visual_variant="baseline"):
         super().__init__()
         import timm
-
         if not model_name.startswith("efficientvit_b"):
             raise ValueError("Use a MIT EfficientViT B-series timm model name")
         self.model_name = model_name
         self.frozen = bool(frozen)
-        if type(stage4_repeats) is not int or stage4_repeats < 0:
-            raise ValueError("stage4_repeats must be a nonnegative integer")
-        self.stage4_repeats = stage4_repeats
-        if stage4_pool_shape is not None:
-            if (not isinstance(stage4_pool_shape, (list, tuple)) or len(stage4_pool_shape) != 2
-                    or any(type(size) is not int or size <= 0 for size in stage4_pool_shape)):
-                raise ValueError("stage4_pool_shape must be a positive 2D shape")
-            if not stage4_repeats:
-                raise ValueError("stage4_pool_shape requires shared stage4 repeats")
-        self.stage4_pool_shape = tuple(stage4_pool_shape) if stage4_pool_shape is not None else None
-        # Stateless pooling is opt-in, preserving legacy six-token checkpoints.
-        self.stage4_pool = (nn.AdaptiveAvgPool2d(self.stage4_pool_shape)
-                            if self.stage4_pool_shape is not None else nn.Identity())
-        if type(mbconv_downsample_blocks) is not int or mbconv_downsample_blocks < 0:
-            raise ValueError("mbconv_downsample_blocks must be a nonnegative integer")
-        if stage4_repeats and mbconv_downsample_blocks:
-            raise ValueError("Choose stage4 repeats or independent MBConv downsampling, not both")
-        if mbconv_downsample_init != "stage4_local":
-            raise ValueError("mbconv_downsample_init must be 'stage4_local'")
-        self.mbconv_downsample_blocks = mbconv_downsample_blocks
-        self.mbconv_downsample_init = mbconv_downsample_init
-        # No implicit network request: pretrained weights are loaded explicitly.
+        self.visual_variant = validate_visual_variant(visual_variant)
+        self.shared_stage4 = self.visual_variant in STAGE4_VARIANTS
+        if self.shared_stage4 and (not model_name.startswith("efficientvit_b0.") or not self.frozen):
+            raise ValueError("shared stage4 requires a frozen EfficientViT-B0 backbone")
         self.model = timm.create_model(model_name, pretrained=False)
         if not type(self.model).__module__.endswith("efficientvit_mit"):
             raise ValueError(f"Expected MIT EfficientViT, got {type(self.model)}")
@@ -51,60 +28,30 @@ class EfficientViTEncoder(nn.Module):
         self._position_cache = {}
         self.model.requires_grad_(not self.frozen)
         self.stage4_repeat_projection = None
-        if self.stage4_repeats:
-            # The B0 stage4 downsamples 64->128. Its 128-channel output needs
-            # a channel-only bridge before calling the SAME stage again.
-            # The bridge is shared across repeats, trainable even for a frozen
-            # pretrained trunk, and adds no spatial pooling or activation.
+        if self.shared_stage4:
             stage4_in = self.model.stages[-1].blocks[0].main.inverted_conv.conv.in_channels
             self.stage4_repeat_projection = nn.Conv2d(self.out_channels, stage4_in, 1, bias=False)
-        self.mbconv_downsample_layers = nn.ModuleList()
-        if self.mbconv_downsample_blocks:
-            sources = self.model.stages[-1].blocks[1:]
-            if self.mbconv_downsample_blocks > len(sources):
-                raise ValueError("Not enough stage4 local MBConv blocks for independent initialization")
-            for source in sources[:self.mbconv_downsample_blocks]:
-                # Copy only MBConv, without its stride-1 identity residual or
-                # LiteMLA. Each copy owns independent trainable parameters.
-                local = source.local_module.main
-                if (local.inverted_conv.conv.in_channels != self.out_channels
-                        or local.point_conv.conv.out_channels != self.out_channels):
-                    raise ValueError("Stage4 local MBConv must preserve the native channel width")
-                block = deepcopy(local).requires_grad_(True)
-                block.depth_conv.conv.stride = (2, 2)
-                self.mbconv_downsample_layers.append(block)
         self.train(not self.frozen)
 
     def load_pretrained_model(self, model_name, freeze=True):
         from safetensors.torch import load_file
-
         path = Path(model_name)
         if path.is_dir():
             path = path / "model.safetensors"
         if path.suffix != ".safetensors" or not path.is_file():
             raise ValueError(f"Expected a local EfficientViT model.safetensors: {path}")
-        state = load_file(str(path), device="cpu")
-        # timm checkpoints include a classifier; 100HzS1 uses only its spatial trunk.
-        state = {key: value for key, value in state.items() if not key.startswith("head.")}
+        state = {k: v for k, v in load_file(str(path), device="cpu").items() if not k.startswith("head.")}
         self.model.load_state_dict(state, strict=True)
-        # The constructor precedes explicit pretrained loading. Refresh copied
-        # initializers HERE so they receive pretrained, not random trunk weights.
-        # Checkpoint reload sets load_backbone_pretrain=False and restores the
-        # learned copies strictly instead of reinitializing them.
-        for index, block in enumerate(self.mbconv_downsample_layers):
-            source = self.model.stages[-1].blocks[index + 1].local_module.main
-            block.load_state_dict(source.state_dict(), strict=True)
         self.frozen = bool(freeze)
+        if self.shared_stage4 and not self.frozen:
+            raise ValueError("shared stage4 keeps the pretrained backbone frozen")
         self.model.requires_grad_(not self.frozen)
         self.train(self.training)
 
     def train(self, mode=True):
-        # Frozen BatchNorm must retain the pretrained running statistics when
-        # the surrounding policy switches to training mode.
         super().train(bool(mode) and not self.frozen)
         if self.stage4_repeat_projection is not None:
             self.stage4_repeat_projection.train(bool(mode))
-        self.mbconv_downsample_layers.train(bool(mode))
         return self
 
     def forward(self, images):
@@ -114,17 +61,13 @@ class EfficientViTEncoder(nn.Module):
             raise ValueError(f"Expected [B,V,3,H,W], got {tuple(images.shape)}")
         batch, views, channels, height, width = images.shape
         features = self.model.forward_features(images.reshape(-1, channels, height, width))
-        features = self.stage4_pool(self.repeat_stage4(features))
-        for block in self.mbconv_downsample_layers:
-            features = block(features)
+        if self.shared_stage4:
+            # The SAME bridge and pretrained stage are reused exactly twice.
+            # Gradients flow through the frozen stage into the trainable bridge.
+            for _ in range(2):
+                features = self.model.stages[-1](self.stage4_repeat_projection(features))
+        # No pooling here: fusion consumes the natural 2x3 grid.
         return self._tokens_from_features(features, batch, views)
-
-    def repeat_stage4(self, features):
-        # Reuse the original module without aliases/duplicate state keys. Do not
-        # use no_grad: gradients must reach the trainable shared bridge.
-        for _ in range(self.stage4_repeats):
-            features = self.model.stages[-1](self.stage4_repeat_projection(features))
-        return features
 
     def _tokens_from_features(self, features, batch, views):
         _, dim, grid_h, grid_w = features.shape

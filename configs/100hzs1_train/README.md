@@ -52,59 +52,39 @@ Choose `minmax.yaml`, `minmax_expanded.yaml`, `pi.yaml`, or `groot.yaml` in
 that directory. Each mode has a separate checkpoint output directory. Override
 `output_dir` when repeating an experiment so existing results are preserved.
 
-## Visual token compression
+## B0 visual variants
 
-EfficientViT can compress each view to its natural 2x3 grid before multiview
-fusion with `compress_before_fusion: true`. This path uses two existing ResBlocks,
-skips adaptive pooling, and projects native channels to 1024 after fusion.
-B2 recipes under `backbones/efficientvit_b2/tau_token/` contain `prefusion_2x3`
-in their filenames and use independent checkpoint output paths. B3 also has an
-observation profile. Existing recipes retain fusion before 2x2 compression.
-See [the dimensions, configuration and validation](../../docs/visual_token_compression.md).
+Only four B0 visual architectures are maintained, under
+`backbones/efficientvit_b0/tau_token/`:
 
-## Compact policy width
+| Recipe | Before fusion | After fusion | Final width |
+|---|---|---|---:|
+| `b0_baseline_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, original scene MLP | 2048 |
+| `b0_stage4_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | pool2x2, Linear128->1024, original scene MLP | 2048 |
+| `b0_rms_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, RMS residual scene MLP | 1024 |
+| `b0_stage4_rms_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | pool2x2, Linear128->1024, RMS residual scene MLP | 1024 |
 
-Recipes with `meanflow_compact` in their filenames align visual, state/action,
-time and DiT features at 256 dimensions. The compact visual projector aligns the backbone output to that width. The state/action encoder keeps all three Linear layers and
-both GELU activations, using `14 -> 256 -> 256 -> 256` instead of 2048-wide
-layers. The extra scene MLP is Identity because its input is already aligned.
-The DiT retains eight layers and uses four 64-dimensional heads.
+All four use the original adaptive average pool **after fusion**, producing
+four tokens/view and 12 visual tokens in total. Shared-stage4 variants replace
+the original two ResBlocks with exactly two extra calls to the same frozen B0
+stage4 and one shared trainable 128->64 bridge (8192 parameters). Pooling adds
+no parameters. There is no independent MBConv or post-fusion stage4 branch.
 
-`model.hidden_size=128` or `model.hidden_size=512` selects alternative widths;
-visual output size, head count and the checkpoint output path follow that value.
-Existing 2048-wide recipes remain unchanged. This is a new training architecture,
-so these recipes use independent paths and do not resume old policy checkpoints.
-See [the full computation and validation](../../docs/visual_token_compression.md).
+`model.visual_variant` is the only architecture selector:
+`baseline`, `stage4`, `rms`, or `stage4_rms`. The three ablation YAMLs inherit
+baseline and change only that value. It derives the policy width, heads,
+scene adaptor and ResBlock count; conflicting manual overrides are rejected.
+Retired compression/width switches and their old recipes have been removed.
 
-Both `tau_token/` and `tau_AdaRMS/` retain B2 compact recipes. AdaRMS filenames
-use `meanflow_adarms_compact` and independent output paths. The shared hidden
-width also controls time embeddings, action-time fusion and every AdaRMS
-scale/shift/gate projection; no 2048-wide time path remains in compact models.
-
-## B0 controlled FM experiments
-
-Only three B0 FM4 experiment entrypoints are maintained. Both ablations inherit
-the original 2048-wide baseline, with the same training/data/inference settings.
-
-| Recipe suffix | Visual compression | Scene output / state / action / time / DiT width |
-|---|---|---:|
-| `native_fm_d2048_baseline_3v_8gpu_L4` | fuse80/view -> two ResBlocks -> pool2x2 | 2048 |
-| `stage4repeat_2x2_fm_d2048_3v_8gpu_L4` | shared stage4x2 -> pool2x2 -> fuse4/view | 2048 |
-| `resmlp_fm_d1024_3v_8gpu_L4` | baseline compression, residual RMS scene MLP | 1024 |
-
-All are under `backbones/efficientvit_b0/tau_token/` with prefix
-`100hzs1_beat_block_hammer_efficientvit_b0_` and suffix `.yaml`.
-Every recipe retains Linear128->1024 and 12 final visual condition tokens.
-Stage4 pooling is before multiview fusion, adds zero parameters, and has no
-post-fusion ResBlocks. The residual recipe keeps the baseline ResBlocks/pool.
+The residual visual MLP is `u + FC2048->1024(GELU(FC1024->2048(RMSNorm(u))))`.
+DiT implementation is unchanged: eight layers and fixed D->D->GELU->D FFNs,
+with 32 heads at D=2048 or 16 at D=1024. State/action/time follow D.
 
 Standard FM / tau_token / four inference steps, 50demo / seed42 / 200epochs /
 batch128 / BF16 / three views / minmax / KV-on / Graph-off remain common.
-Output paths are separated by recipe and timestamp; no old checkpoint is resumed.
-DiT implementation is unchanged: eight layers and fixed D->D->GELU->D FFNs.
-Only the existing hidden-width/head-count settings differ for the 1024 ablation.
+Output paths are separated by variant and timestamp; no old checkpoint is resumed.
+Other normalization modes and unrelated backbone/time/flow recipes are preserved.
 
-The old direct-width1024 and six-token-stage4 YAMLs are archived outside the
-Hydra search path at `docs/archived_configs/beat_b0_fm4_20261101/`.
-Old checkpoints/results/frozen snapshots are untouched.
-See [the three full computation paths](../../docs/beat_b0_fm4_three_configs_20261101.md).
+The four structures require the user's review before starting the newly requested
+training and 100-fixed-seed evaluation of all four policies, including baseline.
+See [the full paths and verification](../../docs/beat_b0_four_visual_variants_20261102.md).

@@ -6,12 +6,11 @@ from timm.models.vision_transformer import RmsNorm
 class ResidualMLPAdapter(nn.Module):
     """Pre-RMSNorm residual FFN; the shortcut retains the original token."""
 
-    def __init__(self, in_features, out_features, hidden_features):
+    def __init__(self, in_features, out_features):
         super().__init__()
         if in_features != out_features:
             raise ValueError("ResidualMLPAdapter requires matching input/output widths")
-        if type(hidden_features) is not int or hidden_features <= 0:
-            raise ValueError("hidden_features must be a positive integer")
+        hidden_features = 2 * out_features
         self.norm = RmsNorm(in_features, eps=1e-6)
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = nn.GELU(approximate="tanh")

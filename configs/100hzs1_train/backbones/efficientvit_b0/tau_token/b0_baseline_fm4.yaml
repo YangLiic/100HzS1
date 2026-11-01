@@ -1,5 +1,5 @@
 # @package _global_
-# Canonical B0 baseline shared by the two maintained ablations.
+# Only visual_variant selects the four B0 visual architectures. Other settings are shared.
 defaults:
   - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4
   - /observation_config/efficientvit_b0_native_3v
@@ -17,33 +17,28 @@ inference:
   use_cuda_graph: false
 
 model:
+  visual_variant: baseline
   flow_type: fm
   time_injection: tau_token
-  hidden_size: 2048
+  hidden_size: ${eval:"1024 if '${model.visual_variant}' in ('rms', 'stage4_rms') else 2048"}
   depth: 8
-  num_heads: 32
-  scene_adaptor: mlp2x_gelu
-  scene_adaptor_hidden_size: null
+  num_heads: ${eval:'${model.hidden_size} // 64'}
+  scene_adaptor: ${eval:"'residual_mlp2x_gelu' if '${model.visual_variant}' in ('rms', 'stage4_rms') else 'mlp2x_gelu'"}
   state_adaptor: mlp3x_gelu
   noise_scheduler:
     num_train_timesteps: 1000
     num_inference_timesteps: 4
   obs_encoder:
     emvis_config:
-      backbone_config:
-        stage4_repeats: 0
-        stage4_pool_shape: null
-        mbconv_downsample_blocks: 0
-      compress_before_fusion: false
-      output_projection_type: linear
+      visual_variant: ${model.visual_variant}
       model_adapter_config:
         target: ResNetAdapter
         dim_out: 1024
         shape_out: [2, 2]
-        conv_num: 2
+        conv_num: ${eval:"None if '${model.visual_variant}' in ('stage4', 'stage4_rms') else 2"}
 
 resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/b0_fm4_baseline/${now:%Y%m%d_%H%M%S}
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_${model.visual_variant}_fm4/${now:%Y%m%d_%H%M%S}
 base_dir: ${output_dir}
 hydra:
   run:

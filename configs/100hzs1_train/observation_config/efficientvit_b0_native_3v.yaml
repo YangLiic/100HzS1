@@ -9,6 +9,3 @@ model:
       backbone_path: ${oc.env:S1_ROOT,.}/pretrained/efficientvit_b0.r224_in1k
       backbone_config:
         model_name: efficientvit_b0.r224_in1k
-        stage4_repeats: 0
-      compress_before_fusion: false
-      output_projection_type: linear
