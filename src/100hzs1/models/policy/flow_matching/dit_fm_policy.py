@@ -280,9 +280,12 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
     def build_condition_adapter(
         self, projector_type, in_features, out_features):
-        if projector_type == 'residual_mlp2x_gelu':
+        if projector_type in ('residual_mlp2x_gelu', 'residual_mlp2x_gelu_no_norm'):
             from .module.condition_adapter import ResidualMLPAdapter
-            return ResidualMLPAdapter(in_features, out_features)
+            return ResidualMLPAdapter(
+                in_features, out_features,
+                use_rms_norm=projector_type == 'residual_mlp2x_gelu',
+            )
         projector = None
         if projector_type == 'identity':
             if in_features != out_features:

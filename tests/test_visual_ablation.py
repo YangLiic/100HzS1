@@ -55,12 +55,14 @@ class VisualAblationTests(unittest.TestCase):
             policy.S1DitFlowMatchingConfig(**deepcopy(m))
         self.assertEqual(len({c['output_dir'] for c in configs.values()}),4)
 
-    def test_only_the_single_variant_field_differs_in_live_yaml_overrides(self):
+    def test_only_variant_and_documented_pool_defaults_differ_in_live_yaml_overrides(self):
         import yaml
         root=ROOT/'configs/100hzs1_train/backbones/efficientvit_b0/tau_token'
         for name in ['stage4','rms','stage4_rms']:
             raw=yaml.safe_load((root/('b0_'+name+'_fm4.yaml')).read_text())
-            self.assertEqual(raw['model'],{'visual_variant':name})
+            expected={'visual_variant':name}
+            if name in variants.STAGE4_VARIANTS:expected['visual_pooling']=False
+            self.assertEqual(raw['model'],expected)
 
     def test_shared_stage4_is_reused_twice_with_one_trainable_bridge(self):
         m=encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',visual_variant='stage4').train()
