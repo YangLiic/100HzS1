@@ -62,6 +62,8 @@ class VisualAblationTests(unittest.TestCase):
             raw=yaml.safe_load((root/('b0_'+name+'_fm4.yaml')).read_text())
             expected={'visual_variant':name}
             if name in variants.STAGE4_VARIANTS:expected['visual_pooling']=False
+            if name == 'stage4_rms':
+                expected['obs_encoder']={'emvis_config':{'mv_fuser_config':{'norm_type':'rmsnorm'}}}
             self.assertEqual(raw['model'],expected)
 
     def test_plain_mlp1024_preset_retains_shared_compression_and_rejects_rms(self):
