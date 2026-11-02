@@ -37,10 +37,6 @@ def validate_policy_visual_variant(kwargs):
     expected = {"hidden_size": width, "num_heads": width // 64,
                 "scene_adaptor": "residual_mlp2x_gelu" if variant in RMS_VARIANTS else "mlp2x_gelu",
                 "state_adaptor": "mlp3x_gelu"}
-    # Explicit visual-normalization ablation; no change to the four default presets.
-    if (variant in RMS_VARIANTS
-            and kwargs.get("scene_adaptor") == "residual_mlp2x_gelu_no_norm"):
-        expected["scene_adaptor"] = "residual_mlp2x_gelu_no_norm"
     for key, value in expected.items():
         if kwargs.get(key, value) != value:
             raise ValueError(f"visual_variant={variant!r} fixes {key}={value!r}")

@@ -60,23 +60,26 @@ Only four B0 visual architectures are maintained, under
 | Recipe | Before fusion | After fusion | Final width |
 |---|---|---|---:|
 | `b0_baseline_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, original scene MLP | 2048 |
-| `b0_stage4_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | pool2x2, Linear128->1024, original scene MLP | 2048 |
+| `b0_stage4_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | no pooling, Linear128->1024, original scene MLP | 2048 |
 | `b0_rms_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, RMS residual scene MLP | 1024 |
-| `b0_stage4_rms_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | pool2x2, Linear128->1024, RMS residual scene MLP | 1024 |
+| `b0_stage4_rms_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | no pooling, Linear128->1024, RMS residual scene MLP | 1024 |
 
-All four use the original adaptive average pool **after fusion**, producing
-four tokens/view and 12 visual tokens in total. Shared-stage4 variants replace
+Baseline and rms retain adaptive average pooling **after fusion**, producing
+four tokens/view and 12 visual tokens. The stage4 presets default to no pooling,
+preserving six tokens/view and 18 visual tokens. Shared-stage4 variants replace
 the original two ResBlocks with exactly two extra calls to the same frozen B0
 stage4 and one shared trainable 128->64 bridge (8192 parameters). Pooling adds
 no parameters. There is no independent MBConv or post-fusion stage4 branch.
 
 `model.visual_variant` is the only architecture selector:
 `baseline`, `stage4`, `rms`, or `stage4_rms`. The three ablation YAMLs inherit
-baseline and change only that value. It derives the policy width, heads,
+baseline; stage4 presets also set `visual_pooling: false`. The variant derives the policy width, heads,
 scene adaptor and ResBlock count; conflicting manual overrides are rejected.
 Retired compression/width switches and their old recipes have been removed.
 
-The residual visual MLP is `u + FC2048->1024(GELU(FC1024->2048(RMSNorm(u))))`.
+`rms` always means the visual **RMSNorm + residual MLP** as a complete module.
+Both `rms` and `stage4_rms` use `u + FC2048->1024(GELU(FC1024->2048(RMSNorm(u))))`;
+RMSNorm is a fixed part of this module.
 DiT implementation is unchanged: eight layers and fixed D->D->GELU->D FFNs,
 with 32 heads at D=2048 or 16 at D=1024. State/action/time follow D.
 
@@ -91,8 +94,9 @@ See [the full paths and verification](../../docs/beat_b0_four_visual_variants_20
 
 ### Optional post-fusion pooling
 
-The four B0 presets retain `model.visual_pooling: true` by default: the original
-post-fusion adaptive average pool produces 2x2 per view (12 visual tokens).
+The `stage4` and `stage4_rms` presets default to `model.visual_pooling: false`.
+The baseline and rms presets retain `true`: post-fusion adaptive average pooling
+produces 2x2 per view (12 visual tokens).
 Set `model.visual_pooling=false` to skip pooling entirely, preserving the natural
 2x3 grid (18 tokens). Linear128->1024 is retained; all widths/DiT FFNs stay fixed
 by `visual_variant`. No pooling is moved before fusion. The four existing YAMLs

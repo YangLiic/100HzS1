@@ -1,8 +1,0 @@
-# @package _global_
-# Isolate the visual RMSNorm only; keep the residual MLP and every width.
-defaults:
-  - /backbones/efficientvit_b0/tau_token/b0_stage4_rms_fm4
-  - _self_
-
-model:
-  scene_adaptor: residual_mlp2x_gelu_no_norm
