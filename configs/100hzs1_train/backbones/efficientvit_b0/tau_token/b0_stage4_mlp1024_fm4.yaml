@@ -1,0 +1,17 @@
+# @package _global_
+# Ordinary-MLP width ablation: shared stage4, no pooling, 128 -> 512 -> 1024 -> 1024.
+defaults:
+  - /backbones/efficientvit_b0/tau_token/b0_stage4_fm4
+  - _self_
+
+model:
+  visual_variant: stage4_mlp1024
+  visual_pooling: false
+  hidden_size: 1024
+  num_heads: 16
+  scene_adaptor: mlp2x_gelu
+  obs_encoder:
+    emvis_config:
+      model_adapter_config:
+        dim_out: 512
+        conv_num: null

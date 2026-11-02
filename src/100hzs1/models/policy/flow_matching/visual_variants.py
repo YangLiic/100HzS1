@@ -1,8 +1,8 @@
-"""The four supported B0 visual architectures; training settings are independent."""
+"""Named B0 visual architectures; training settings are independent."""
 from copy import deepcopy
 
-VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms")
-STAGE4_VARIANTS = ("stage4", "stage4_rms")
+VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024")
+STAGE4_VARIANTS = ("stage4", "stage4_rms", "stage4_mlp1024")
 RMS_VARIANTS = ("rms", "stage4_rms")
 RETIRED_BACKBONE_OPTIONS = ("stage4_repeats", "stage4_pool_shape", "stage4_repeat_position",
                             "mbconv_downsample_blocks", "mbconv_downsample_init")
@@ -33,7 +33,7 @@ def validate_policy_visual_variant(kwargs):
     if type(pooling) is not bool:
         raise ValueError("visual_pooling must be a bool")
     kwargs["visual_pooling"] = pooling
-    width = 1024 if variant in RMS_VARIANTS else 2048
+    width = 1024 if variant in RMS_VARIANTS or variant == "stage4_mlp1024" else 2048
     expected = {"hidden_size": width, "num_heads": width // 64,
                 "scene_adaptor": "residual_mlp2x_gelu" if variant in RMS_VARIANTS else "mlp2x_gelu",
                 "state_adaptor": "mlp3x_gelu"}
@@ -56,7 +56,8 @@ def validate_policy_visual_variant(kwargs):
     if vision.get("backbone_trainable", False):
         raise ValueError("B0 visual variants keep the pretrained backbone frozen")
     adapter = vision.get("model_adapter_config", {})
-    expected_adapter = {"dim_out": 1024, "conv_num": None if variant in STAGE4_VARIANTS else 2}
+    expected_adapter = {"dim_out": 512 if variant == "stage4_mlp1024" else 1024,
+                        "conv_num": None if variant in STAGE4_VARIANTS else 2}
     for key, value in expected_adapter.items():
         if adapter.get(key) != value:
             raise ValueError(f"visual_variant={variant!r} fixes model_adapter_config.{key}={value!r}")

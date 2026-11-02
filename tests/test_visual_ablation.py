@@ -1,4 +1,4 @@
-"""Four B0 visual presets, fixed controls and post-fusion pooling."""
+"""Named B0 visual presets, fixed controls and post-fusion pooling."""
 from copy import deepcopy
 from unittest.mock import patch
 from importlib import import_module
@@ -31,7 +31,7 @@ class VisualAblationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):torch.set_num_threads(1)
 
-    def test_exactly_four_presets_and_common_training_settings(self):
+    def test_named_presets_and_common_training_settings(self):
         files={p.name for p in (ROOT/'configs/100hzs1_train/backbones/efficientvit_b0').rglob('*.yaml')}
         self.assertEqual(files,{'b0_'+v+'_fm4.yaml' for v in variants.VISUAL_VARIANTS})
         configs={v:recipe(v) for v in variants.VISUAL_VARIANTS};base=configs['baseline']
@@ -40,20 +40,20 @@ class VisualAblationTests(unittest.TestCase):
                         'n_obs_steps','n_image_obs_steps','train_dataset','inference']:
                 self.assertEqual(cfg[key],base[key],(name,key))
             m=cfg['model'];v=m['obs_encoder']['emvis_config'];s=name in variants.STAGE4_VARIANTS;r=name in variants.RMS_VARIANTS
-            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if r else (2048,32,8))
+            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if r or name=='stage4_mlp1024' else (2048,32,8))
             self.assertEqual(m['visual_variant'],name);self.assertEqual(v['visual_variant'],name)
             self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu' if r else 'mlp2x_gelu')
             self.assertEqual(m['state_adaptor'],'mlp3x_gelu');self.assertEqual(m['flow_type'],'fm')
             self.assertEqual(m['noise_scheduler']['num_train_timesteps'],1000)
             self.assertEqual(cfg['inference']['num_inference_timesteps'],4)
             self.assertEqual(v['model_adapter_config']['conv_num'],None if s else 2)
-            self.assertEqual(v['model_adapter_config']['dim_out'],1024)
+            self.assertEqual(v['model_adapter_config']['dim_out'],512 if name=='stage4_mlp1024' else 1024)
             self.assertEqual(v['model_adapter_config']['shape_out'],[2,2])
             self.assertEqual(set(v['backbone_config']),{'model_name'})
             for key in ['ffn_hidden_size','scene_adaptor_hidden_size']:self.assertNotIn(key,m)
             for key in variants.RETIRED_VISION_OPTIONS:self.assertNotIn(key,v)
             policy.S1DitFlowMatchingConfig(**deepcopy(m))
-        self.assertEqual(len({c['output_dir'] for c in configs.values()}),4)
+        self.assertEqual(len({c['output_dir'] for c in configs.values()}),5)
 
     def test_only_variant_and_documented_pool_defaults_differ_in_live_yaml_overrides(self):
         import yaml
@@ -63,6 +63,21 @@ class VisualAblationTests(unittest.TestCase):
             expected={'visual_variant':name}
             if name in variants.STAGE4_VARIANTS:expected['visual_pooling']=False
             self.assertEqual(raw['model'],expected)
+
+    def test_plain_mlp1024_preset_retains_shared_compression_and_rejects_rms(self):
+        cfg=recipe('stage4_mlp1024',False)['model']
+        self.assertEqual(cfg['obs_encoder']['emvis_config']['model_adapter_config']['dim_out'],512)
+        self.assertEqual((cfg['hidden_size'],cfg['num_heads'],cfg['scene_adaptor']),(1024,16,'mlp2x_gelu'))
+        policy.S1DitFlowMatchingConfig(**deepcopy(cfg))
+        mlp=policy.S1DitFlowMatching.build_condition_adapter(None,'mlp2x_gelu',512,1024)
+        self.assertIsInstance(mlp,nn.Sequential)
+        self.assertEqual([type(x) for x in mlp],[nn.Linear,nn.GELU,nn.Linear])
+        self.assertEqual([(x.in_features,x.out_features) for x in mlp if isinstance(x,nn.Linear)],[(512,1024),(1024,1024)])
+        for key,value in [('hidden_size',2048),('scene_adaptor','residual_mlp2x_gelu')]:
+            bad=deepcopy(cfg);bad[key]=value
+            with self.assertRaises(ValueError):policy.S1DitFlowMatchingConfig(**bad)
+        bad=deepcopy(cfg);bad['obs_encoder']['emvis_config']['model_adapter_config']['dim_out']=1024
+        with self.assertRaises(ValueError):policy.S1DitFlowMatchingConfig(**bad)
 
     def test_shared_stage4_is_reused_twice_with_one_trainable_bridge(self):
         m=encoder.EfficientViTEncoder('efficientvit_b0.r224_in1k',visual_variant='stage4').train()
@@ -84,7 +99,7 @@ class VisualAblationTests(unittest.TestCase):
             self.assertIs(stage,m.model.stages[-1]);self.assertFalse(hasattr(m,'stage4_pool'))
         finally:h.remove()
 
-    def test_fusion_then_original_pool_for_all_four_variants(self):
+    def test_fusion_then_original_pool_for_all_variants(self):
         for name in variants.VISUAL_VARIANTS:
             with self.subTest(variant=name):
                 m=scene(name).train();events=[];pool_io=[]
@@ -97,7 +112,7 @@ class VisualAblationTests(unittest.TestCase):
                     for h in hooks:h.remove()
                 count=6 if name in variants.STAGE4_VARIANTS else 80
                 self.assertEqual(events,[('fusion',(1,3,count,128)),'pool'])
-                self.assertEqual(list(out.shape),[1,3,4,1024])
+                self.assertEqual(list(out.shape),[1,3,4,m.dim_out])
                 self.assertEqual(tuple(pool_io[0].shape), (3,128,2,3))
                 self.assertIs(m.model_adapter.patch_merging.adapter,nn.AdaptiveAvgPool2d)
                 self.assertEqual(len(m.model_adapter.downsample_blocks),0 if name in variants.STAGE4_VARIANTS else 2)
@@ -112,7 +127,7 @@ class VisualAblationTests(unittest.TestCase):
         torch.testing.assert_close(a(x,(2,2)),expected,rtol=0,atol=0)
         self.assertEqual(sum(p.numel() for p in nn.AdaptiveAvgPool2d((2,2)).parameters()),0)
 
-    def test_json_strict_visual_reload_for_four_variants(self):
+    def test_json_strict_visual_reload_for_variants(self):
         for name in variants.VISUAL_VARIANTS:
             cfg=deepcopy(recipe(name)['model']['obs_encoder']['emvis_config']);cfg['load_backbone_pretrain']=False
             a=vision.VisualEncoder(emvis_config=cfg,rgb_key=['left_cam','right_cam','head_cam']).eval()
@@ -120,7 +135,7 @@ class VisualAblationTests(unittest.TestCase):
             b.load_state_dict(a.state_dict(),strict=True)
             obs={key:torch.rand(1,3,240,320) for key in a.rgb_key}
             with torch.no_grad():torch.testing.assert_close(a(obs),b(obs),rtol=0,atol=0)
-            self.assertEqual(list(b.output_shape_meta()),[3,2,2,1024])
+            self.assertEqual(list(b.output_shape_meta()),[3,2,2,cfg['model_adapter_config']['dim_out']])
 
     def test_pooling_can_be_disabled_without_calling_any_pool(self):
         for name in variants.VISUAL_VARIANTS:
@@ -130,7 +145,7 @@ class VisualAblationTests(unittest.TestCase):
                 policy.S1DitFlowMatchingConfig(**deepcopy(cfg['model']))
                 with patch.object(a,'adapter',side_effect=AssertionError('pooling must not execute')):
                     out=m(torch.rand(1,3,3,240,320))
-                self.assertEqual(list(out.shape),[1,3,6,1024])
+                self.assertEqual(list(out.shape),[1,3,6,m.dim_out])
                 out.square().mean().backward()
                 self.assertGreater(a.proj.weight.grad.abs().sum().item(),0)
                 if name in variants.STAGE4_VARIANTS:
