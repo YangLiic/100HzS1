@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /backbones/efficientvit_b0/tau_token/b0_baseline_fm4
+  - _self_
+
+model:
+  visual_variant: mlp1024

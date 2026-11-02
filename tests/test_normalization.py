@@ -34,7 +34,7 @@ class NormalizationTests(unittest.TestCase):
 
     def test_four_choices_and_invalid_names(self):
         self.assertEqual(norms.NORM_MODES, ("minmax", "minmax_expanded", "pi", "groot"))
-        self.assertEqual(norms.validate_norm(), "minmax")
+        self.assertEqual(norms.validate_norm(), "groot")
         for value in [None, {}, "invalid", "MINMAX"]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 norms.validate_norm(value)
@@ -70,7 +70,7 @@ class NormalizationTests(unittest.TestCase):
     def test_old_schema_has_identical_keys_and_bitwise_arithmetic(self):
         old = import_module("100hzs1.common.normalize_util").get_range_normalizer_from_stat(
             {k: v for k, v in statistics().items() if k not in {"q01", "q99"}})
-        new = norms.make_normalizer(statistics())
+        new = norms.make_normalizer(statistics(), "minmax")
         self.assertEqual(set(old.state_dict()), set(new.state_dict()))
         for key in old.state_dict():
             torch.testing.assert_close(old.state_dict()[key], new.state_dict()[key], rtol=0, atol=0)

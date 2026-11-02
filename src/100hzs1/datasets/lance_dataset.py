@@ -712,7 +712,7 @@ class S1Dataset(Dataset):
             validation.video_cache_size_bytes = self.video_cache_size_bytes
         return validation
 
-    def get_normalizer(self, norm="minmax", **kwargs):
+    def get_normalizer(self, norm="groot", **kwargs):
         norm = validate_norm(norm)
         normalizer = LinearNormalizer()
 
@@ -757,7 +757,7 @@ class S1Dataset(Dataset):
         }
         return get_identity_normalizer_from_stat(stat)
 
-    def _create_feature_normalizer(self, key, feature, norm="minmax"):
+    def _create_feature_normalizer(self, key, feature, norm="groot"):
         if norm != "minmax" and key in {"state", "action"}:
             values = self._reader.fetch(self.frame_indices)[key]
             return normalizer_from_data(values, norm)

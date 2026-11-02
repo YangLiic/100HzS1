@@ -8,14 +8,14 @@ from .normalize_util import get_range_normalizer_from_stat
 NORM_MODES = ("minmax", "minmax_expanded", "pi", "groot")
 
 
-def validate_norm(norm="minmax"):
+def validate_norm(norm="groot"):
     if not isinstance(norm, str) or norm not in NORM_MODES:
         raise ValueError(f"norm must be one of {NORM_MODES}, got {norm!r}")
     return norm
 
 
-def make_normalizer(stats, norm="minmax"):
-    """Build a field normalizer; missing norm keeps the legacy state schema."""
+def make_normalizer(stats, norm="groot"):
+    """Build a field normalizer; new calls default to GR00T q01/q99 + clip."""
     validate_norm(norm)
     stat = {k: np.asarray(v, dtype=np.float32).copy() for k, v in stats.items()}
     if norm in ("minmax", "minmax_expanded"):

@@ -482,7 +482,7 @@ class S1Dataset(LeRobotDataset):
         )
         return self._static_joint_info
 
-    def get_normalizer(self, norm="minmax", **kwargs):
+    def get_normalizer(self, norm="groot", **kwargs):
         """Create normalizer for all dataset features"""
         norm = validate_norm(norm)
         normalizer = LinearNormalizer()
@@ -608,7 +608,7 @@ class S1Dataset(LeRobotDataset):
         }
         return get_identity_normalizer_from_stat(stat)
 
-    def _create_feature_normalizer(self, key, feature, norm="minmax"):
+    def _create_feature_normalizer(self, key, feature, norm="groot"):
         """Create appropriate normalizer based on feature type."""
         model_key = self.feature_key_map.get(key, key)
         if norm != "minmax" and model_key in {"state", "action"}:

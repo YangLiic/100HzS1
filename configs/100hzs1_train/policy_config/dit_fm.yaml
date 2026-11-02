@@ -74,9 +74,9 @@ checkpointing_period: 10000
 val_period: 5000 # -1 to disable validation during training
 
 
-# Joint state/action normalization. Missing in legacy configs/checkpoints -> minmax.
+# New training defaults to GR00T q01/q99 + clip; old checkpoints keep minmax.
 # Choices: minmax | minmax_expanded (1.25x range) | pi (q01/q99) | groot (q01/q99+clip).
-norm: minmax
+norm: groot
 
 # ------------------------------- model config
 horizon: 24

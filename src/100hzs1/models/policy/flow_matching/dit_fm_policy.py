@@ -48,12 +48,12 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     # commanded expert action.
     supervision_key: Optional[str] = None
     self_attn_first: bool = True
-    norm: str = "minmax"
+    norm: str = "groot"
     flow_type: str = "fm"
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
     visual_variant: Optional[str] = None
-    visual_pooling: bool = True
+    visual_pooling: bool = False
     
 
     def __init__(self, *args, **kwargs):
@@ -79,7 +79,7 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
         self.pkg_map = {}
         for key, value in kwargs.items():
             setattr(self, key, value)
-        self.norm = validate_norm(kwargs.get("norm", "minmax"))
+        self.norm = validate_norm(kwargs.get("norm", "groot"))
         if self.norm != "minmax" and kwargs.get("state_key", "state") != "state":
             raise ValueError("Non-minmax norm currently supports absolute joint state/action; "
                              "delta/endpose configurations retain norm=minmax")
@@ -280,9 +280,10 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
     def build_condition_adapter(
         self, projector_type, in_features, out_features):
-        if projector_type == 'residual_mlp2x_gelu':
+        if projector_type in ('residual_mlp2x_gelu', 'residual_mlp2x_gelu_no_norm'):
             from .module.condition_adapter import ResidualMLPAdapter
-            return ResidualMLPAdapter(in_features, out_features)
+            return ResidualMLPAdapter(in_features, out_features,
+                                      use_rmsnorm=projector_type == 'residual_mlp2x_gelu')
         projector = None
         if projector_type == 'identity':
             if in_features != out_features:

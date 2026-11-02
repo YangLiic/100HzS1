@@ -1,8 +1,10 @@
 """Named B0 visual architectures; training settings are independent."""
 from copy import deepcopy
 
-VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024")
-STAGE4_VARIANTS = ("stage4", "stage4_rms", "stage4_mlp1024")
+VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024", "mlp1024", "stage4_resmlp_no_norm")
+STAGE4_VARIANTS = ("stage4", "stage4_rms", "stage4_mlp1024", "stage4_resmlp_no_norm")
+PLAIN_1024_VARIANTS = ("mlp1024", "stage4_mlp1024")
+RESIDUAL_VARIANTS = ("rms", "stage4_rms", "stage4_resmlp_no_norm")
 RMS_VARIANTS = ("rms", "stage4_rms")
 RETIRED_BACKBONE_OPTIONS = ("stage4_repeats", "stage4_pool_shape", "stage4_repeat_position",
                             "mbconv_downsample_blocks", "mbconv_downsample_init")
@@ -29,13 +31,18 @@ def validate_policy_visual_variant(kwargs):
     variant = validate_visual_variant(variant or "baseline")
     kwargs = dict(kwargs)
     kwargs["visual_variant"] = variant
-    pooling = kwargs.get("visual_pooling", True)
+    adapter = vision.get("model_adapter_config", {})
+    # Explicit old 2x2 metadata still denotes pooling. New B0 recipes pass
+    # visual_pooling=false and shape_out=[2,3].
+    legacy_pool = adapter.get("use_pooling", list(adapter.get("shape_out", [])) == [2, 2])
+    pooling = kwargs.get("visual_pooling", legacy_pool)
     if type(pooling) is not bool:
         raise ValueError("visual_pooling must be a bool")
     kwargs["visual_pooling"] = pooling
-    width = 1024 if variant in RMS_VARIANTS or variant == "stage4_mlp1024" else 2048
+    width = 1024 if variant in RESIDUAL_VARIANTS or variant in PLAIN_1024_VARIANTS else 2048
     expected = {"hidden_size": width, "num_heads": width // 64,
-                "scene_adaptor": "residual_mlp2x_gelu" if variant in RMS_VARIANTS else "mlp2x_gelu",
+                "scene_adaptor": ("residual_mlp2x_gelu" if variant in RMS_VARIANTS else
+                                  "residual_mlp2x_gelu_no_norm" if variant == "stage4_resmlp_no_norm" else "mlp2x_gelu"),
                 "state_adaptor": "mlp3x_gelu"}
     for key, value in expected.items():
         if kwargs.get(key, value) != value:
@@ -56,7 +63,7 @@ def validate_policy_visual_variant(kwargs):
     if vision.get("backbone_trainable", False):
         raise ValueError("B0 visual variants keep the pretrained backbone frozen")
     adapter = vision.get("model_adapter_config", {})
-    expected_adapter = {"dim_out": 512 if variant == "stage4_mlp1024" else 1024,
+    expected_adapter = {"dim_out": 512 if variant in PLAIN_1024_VARIANTS else 1024,
                         "conv_num": None if variant in STAGE4_VARIANTS else 2}
     for key, value in expected_adapter.items():
         if adapter.get(key) != value:

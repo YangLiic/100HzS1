@@ -47,10 +47,10 @@ class ResidualWidthTests(unittest.TestCase):
         self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8))
         self.assertNotIn('ffn_hidden_size',m)
         self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu');self.assertEqual(m['state_adaptor'],'mlp3x_gelu')
-        self.assertEqual(v['model_adapter_config']['dim_out'],1024);self.assertEqual(v['model_adapter_config']['shape_out'],[2,2])
+        self.assertEqual(v['model_adapter_config']['dim_out'],1024);self.assertEqual(v['model_adapter_config']['shape_out'],[2,3])
         self.assertEqual(v['model_adapter_config']['conv_num'],2);self.assertEqual(m['visual_variant'],'rms')
         self.assertEqual(m['flow_type'],'fm');self.assertEqual(c['inference']['num_inference_timesteps'],4)
-        self.assertEqual((c['norm'],c['seed'],c['num_train_epochs'],c['train_batch_size']),('minmax',42,200,128))
+        self.assertEqual((c['norm'],c['seed'],c['num_train_epochs'],c['train_batch_size']),('groot',42,200,128))
         self.assertIsNone(c['resume_from_checkpoint'])
 
     def test_residual_norm_is_only_on_branch(self):
@@ -73,7 +73,7 @@ class ResidualWidthTests(unittest.TestCase):
                 self.assertEqual(p.model.t_embedder.mlp[-1].out_features,D)
                 if flow=='meanflow':self.assertEqual(p.model.r_embedder.mlp[-1].out_features,D)
                 else:self.assertIsNone(p.model.r_embedder)
-                source=torch.randn(1,12,D);conditions=p.scene_adaptor(source);x=p.state_adaptor(torch.randn(1,24,14))
+                source=torch.randn(1,18,D);conditions=p.scene_adaptor(source);x=p.state_adaptor(torch.randn(1,24,14))
                 p.train();out=p.model(x,t,conditions,r=r);out.square().mean().backward()
                 checked=[p.scene_adaptor.norm.weight,p.scene_adaptor.fc1.weight,p.scene_adaptor.fc2.weight,p.model.blocks[0].ffn.fc1.weight,p.model.t_embedder.mlp[0].weight]
                 checked += [x.weight for x in p.state_adaptor if isinstance(x,nn.Linear)]
@@ -82,7 +82,7 @@ class ResidualWidthTests(unittest.TestCase):
                 p.eval()
                 with torch.no_grad():
                     cache=p.model.prepare_kv_cache(conditions)
-                    self.assertEqual(cache[0][0].shape,(1,1,12,64))
+                    self.assertEqual(cache[0][0].shape,(1,1,18,64))
                     cached=p.model(x,t,conditions,kv_cache=cache,r=r);plain=p.model(x,t,conditions,r=r)
                     torch.testing.assert_close(cached,plain,rtol=1e-5,atol=1e-6)
                 restored=policy.S1DitFlowMatching(policy.S1DitFlowMatchingConfig(**json.loads(p.config.to_json_string()))).float().eval()

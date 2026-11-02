@@ -23,10 +23,10 @@ Set the top-level scalar `norm` in a recipe, or override it on the training comm
 
 | norm | Behavior |
 | --- | --- |
-| `minmax` | Original per-dimension min/max mapping; default for omitted fields |
+| `minmax` | Original per-dimension min/max mapping; retained for explicit/legacy recipes |
 | `minmax_expanded` | Expand the min/max interval 1.25x; training extrema map to approximately -0.8 and 0.8 |
 | `pi` | q01/q99 mapping with epsilon 1e-6; no clipping |
-| `groot` | q01/q99 mapping; near-constant dimensions map to zero; clip normalized state/targets and final predictions to [-1,1] |
+| `groot` | Default for new training: q01/q99 mapping; near-constant dimensions map to zero; clip normalized state/targets and final predictions to [-1,1] |
 
 For example, append `norm=pi` to `scripts/train/train.sh <recipe.yaml>`.
 The choice is applied to absolute joint `state` and supervised `action` fields.
@@ -35,8 +35,7 @@ validation uses the policy's training normalizer. Delta/endpose recipes continue
 to require `norm=minmax`, retaining their existing specialized processing.
 
 The model's config.json stores `norm`; scale, offset, quantile statistics and any
-clipping/inverse parameters are saved in the normalizer state. Old configs and
-weights without `norm` load as `minmax` without rebuilding their statistics or
+clipping/inverse parameters are saved in the normalizer state. Old serialized checkpoints without `norm` load as `minmax` without rebuilding their statistics or
 adding required state tensors. Inference uses checkpoint parameters.
 Resuming optimizer state, or keeping a checkpoint normalizer, requires a matching
 normalization mode. A fresh training run is required for a controlled mode comparison.
@@ -54,56 +53,47 @@ that directory. Each mode has a separate checkpoint output directory. Override
 
 ## B0 visual variants
 
-Only four B0 visual architectures are maintained, under
-`backbones/efficientvit_b0/tau_token/`:
+New recipes default to **GR00T-style normalization (`norm: groot`), no pooling
+(`model.visual_pooling: false`), standard FM, tau_token and four inference steps**.
+Explicit overrides remain supported. Existing run snapshots and saved checkpoints
+retain their recorded settings; these new defaults do not rewrite old results.
 
-| Recipe | Before fusion | After fusion | Final width |
-|---|---|---|---:|
-| `b0_baseline_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, original scene MLP | 2048 |
-| `b0_stage4_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | no pooling, Linear128->1024, original scene MLP | 2048 |
-| `b0_rms_fm4.yaml` | original B0, 80 tokens/view | original two ResBlocks, pool2x2, Linear128->1024, RMS residual scene MLP | 1024 |
-| `b0_stage4_rms_fm4.yaml` | shared frozen stage4 twice, 6 tokens/view | no pooling, Linear128->1024, RMS residual scene MLP | 1024 |
+Recipes live under `backbones/efficientvit_b0/tau_token/`:
 
-Baseline and rms retain adaptive average pooling **after fusion**, producing
-four tokens/view and 12 visual tokens. The stage4 presets default to no pooling,
-preserving six tokens/view and 18 visual tokens. Shared-stage4 variants replace
-the original two ResBlocks with exactly two extra calls to the same frozen B0
-stage4 and one shared trainable 128->64 bridge (8192 parameters). Pooling adds
-no parameters. There is no independent MBConv or post-fusion stage4 branch.
+| visual_variant / recipe suffix | Repeat stage4 before fusion | Visual projection | Scene adaptor | DiT width |
+|---|---|---|---|---:|
+| `baseline` | no | 128 -> 1024 | ordinary 1024 -> 2048 -> GELU -> 2048 | 2048 |
+| `stage4` | yes | 128 -> 1024 | ordinary 1024 -> 2048 -> GELU -> 2048 | 2048 |
+| `rms` | no | 128 -> 1024 | RMSNorm + residual 1024 -> 2048 -> GELU -> 1024 | 1024 |
+| `stage4_rms` | yes | 128 -> 1024 | RMSNorm + residual 1024 -> 2048 -> GELU -> 1024 | 1024 |
+| `mlp1024` | no | 128 -> 512 | ordinary 512 -> 1024 -> GELU -> 1024 | 1024 |
+| `stage4_mlp1024` | yes | 128 -> 512 | ordinary 512 -> 1024 -> GELU -> 1024 | 1024 |
+| `stage4_resmlp_no_norm` | yes | 128 -> 1024 | residual 1024 -> 2048 -> GELU -> 1024, explicitly no RMSNorm | 1024 |
 
-`model.visual_variant` is the only architecture selector:
-`baseline`, `stage4`, `rms`, or `stage4_rms`. The three ablation YAMLs inherit
-baseline; stage4 presets also set `visual_pooling: false`. The variant derives the policy width, heads,
-scene adaptor and ResBlock count; conflicting manual overrides are rejected.
-Retired compression/width switches and their old recipes have been removed.
+Each named recipe is `b0_<visual_variant>_fm4.yaml`. The variant fixes width,
+heads, scene adaptor and original ResBlock count; conflicting manual overrides
+are rejected. Independent DiT FFN width switches remain removed.
 
-`rms` always means the visual **RMSNorm + residual MLP** as a complete module.
-Both `rms` and `stage4_rms` use `u + FC2048->1024(GELU(FC1024->2048(RMSNorm(u))))`;
-RMSNorm is a fixed part of this module.
-DiT implementation is unchanged: eight layers and fixed D->D->GELU->D FFNs,
-with 32 heads at D=2048 or 16 at D=1024. State/action/time follow D.
+All new B0 recipes retain the natural 2x3 grid (6 tokens/view, 18 across three
+views). Without repeat, the original two trainable ResBlocks downsample after
+fusion from 8x10 to 2x3. With repeat, those ResBlocks are absent: the same frozen
+B0 stage4 is called two extra times before fusion, 8x10 -> 4x5 -> 2x3, using one
+shared trainable 128->64 bridge (8192 parameters). Fusion is unchanged. There is
+no independent MBConv or post-fusion stage4 branch.
 
-Standard FM / tau_token / four inference steps, 50demo / seed42 / 200epochs /
-batch128 / BF16 / three views / minmax / KV-on / Graph-off remain common.
-Output paths are separated by variant and timestamp; no old checkpoint is resumed.
-Other normalization modes and unrelated backbone/time/flow recipes are preserved.
+`model.visual_pooling=true` explicitly restores post-fusion AdaptiveAvgPool2d
+2x2, 4 tokens/view and 12 total; it adds zero parameters. Legacy checkpoint
+metadata specifying 2x2 retains pooling when reloaded. Changing condition count
+requires fresh training of the complete policy.
 
-The four structures require the user's review before starting the newly requested
-training and 100-fixed-seed evaluation of all four policies, including baseline.
-See [the full paths and verification](../../docs/beat_b0_four_visual_variants_20261102.md).
+`rms` always means the complete visual **RMSNorm + residual MLP**:
+`u + FC2048->1024(GELU(FC1024->2048(RMSNorm(u))))`.
+The separately named no-norm variant is the explicitly authorized ablation
+`u + FC2048->1024(GELU(FC1024->2048(u)))`; it is never called rms.
 
-### Optional post-fusion pooling
-
-The `stage4` and `stage4_rms` presets default to `model.visual_pooling: false`.
-The baseline and rms presets retain `true`: post-fusion adaptive average pooling
-produces 2x2 per view (12 visual tokens).
-Set `model.visual_pooling=false` to skip pooling entirely, preserving the natural
-2x3 grid (18 tokens). Linear128->1024 is retained; all widths/DiT FFNs stay fixed
-by `visual_variant`. No pooling is moved before fusion. The four existing YAMLs
-are sufficient; no additional architecture presets or width switches are needed.
-
-For the two requested no-pool experiments, use `b0_stage4_fm4.yaml` and
-`b0_stage4_rms_fm4.yaml`, each with `model.visual_pooling=false`. Existing pooled
-checkpoints without this field still default to pooling enabled and strict-load.
-An 18-token policy requires fresh training because visual condition positions
-have a different length. Inference reads the choice from the saved config.
+DiT remains eight layers with fixed D->D->GELU->D FFNs, head_dim=64,
+32 heads for D=2048 or 16 for D=1024. State, noisy actions and time follow D.
+Shared controls: 50 demos, seed42, 200 epochs, batch128, BF16, three views,
+KV-on / Graph-off; standard FM uses 1000 time buckets and four inference steps.
+Use independent output paths for repeated experiments; never resume a different
+normalization or architecture as if it were the same experiment.

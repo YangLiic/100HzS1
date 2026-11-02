@@ -40,20 +40,20 @@ class VisualAblationTests(unittest.TestCase):
                         'n_obs_steps','n_image_obs_steps','train_dataset','inference']:
                 self.assertEqual(cfg[key],base[key],(name,key))
             m=cfg['model'];v=m['obs_encoder']['emvis_config'];s=name in variants.STAGE4_VARIANTS;r=name in variants.RMS_VARIANTS
-            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if r or name=='stage4_mlp1024' else (2048,32,8))
+            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if r or name in variants.PLAIN_1024_VARIANTS or name=='stage4_resmlp_no_norm' else (2048,32,8))
             self.assertEqual(m['visual_variant'],name);self.assertEqual(v['visual_variant'],name)
-            self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu' if r else 'mlp2x_gelu')
+            self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu' if r else 'residual_mlp2x_gelu_no_norm' if name=='stage4_resmlp_no_norm' else 'mlp2x_gelu')
             self.assertEqual(m['state_adaptor'],'mlp3x_gelu');self.assertEqual(m['flow_type'],'fm')
             self.assertEqual(m['noise_scheduler']['num_train_timesteps'],1000)
             self.assertEqual(cfg['inference']['num_inference_timesteps'],4)
             self.assertEqual(v['model_adapter_config']['conv_num'],None if s else 2)
-            self.assertEqual(v['model_adapter_config']['dim_out'],512 if name=='stage4_mlp1024' else 1024)
+            self.assertEqual(v['model_adapter_config']['dim_out'],512 if name in variants.PLAIN_1024_VARIANTS else 1024)
             self.assertEqual(v['model_adapter_config']['shape_out'],[2,2])
             self.assertEqual(set(v['backbone_config']),{'model_name'})
             for key in ['ffn_hidden_size','scene_adaptor_hidden_size']:self.assertNotIn(key,m)
             for key in variants.RETIRED_VISION_OPTIONS:self.assertNotIn(key,v)
             policy.S1DitFlowMatchingConfig(**deepcopy(m))
-        self.assertEqual(len({c['output_dir'] for c in configs.values()}),5)
+        self.assertEqual(len({c['output_dir'] for c in configs.values()}),len(variants.VISUAL_VARIANTS))
 
     def test_only_variant_and_documented_pool_defaults_differ_in_live_yaml_overrides(self):
         import yaml

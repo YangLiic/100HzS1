@@ -10,6 +10,9 @@ def validate_class_path(path):
 
 def prepare_checkpoint_metadata(config):
     config = deepcopy(config)
+    # Serialized checkpoints predating norm used minmax. New model/config
+    # defaults must never reinterpret those saved weights.
+    config.setdefault("norm", "minmax")
     references = config.get("pkg_map")
     if not isinstance(references, dict):
         raise ValueError("Checkpoint is missing pkg_map")
