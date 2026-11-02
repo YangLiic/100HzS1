@@ -1,12 +1,11 @@
 """Named B0 visual architectures; training settings are independent."""
 from copy import deepcopy
 
-VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024", "mlp1024", "stage4_resmlp_no_norm", "ln", "stage4_ln")
-STAGE4_VARIANTS = ("stage4", "stage4_rms", "stage4_mlp1024", "stage4_resmlp_no_norm", "stage4_ln")
+VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024", "mlp1024", "stage4_resmlp_no_norm")
+STAGE4_VARIANTS = ("stage4", "stage4_rms", "stage4_mlp1024", "stage4_resmlp_no_norm")
 PLAIN_1024_VARIANTS = ("mlp1024", "stage4_mlp1024")
-RESIDUAL_VARIANTS = ("rms", "stage4_rms", "stage4_resmlp_no_norm", "ln", "stage4_ln")
+RESIDUAL_VARIANTS = ("rms", "stage4_rms", "stage4_resmlp_no_norm")
 RMS_VARIANTS = ("rms", "stage4_rms")
-LN_VARIANTS = ("ln", "stage4_ln")
 RETIRED_BACKBONE_OPTIONS = ("stage4_repeats", "stage4_pool_shape", "stage4_repeat_position",
                             "mbconv_downsample_blocks", "mbconv_downsample_init")
 RETIRED_VISION_OPTIONS = ("compress_before_fusion", "output_projection_type")
@@ -43,7 +42,6 @@ def validate_policy_visual_variant(kwargs):
     width = 1024 if variant in RESIDUAL_VARIANTS or variant in PLAIN_1024_VARIANTS else 2048
     expected = {"hidden_size": width, "num_heads": width // 64,
                 "scene_adaptor": ("residual_mlp2x_gelu" if variant in RMS_VARIANTS else
-                                  "residual_mlp2x_gelu_layernorm" if variant in LN_VARIANTS else
                                   "residual_mlp2x_gelu_no_norm" if variant == "stage4_resmlp_no_norm" else "mlp2x_gelu"),
                 "state_adaptor": "mlp3x_gelu"}
     for key, value in expected.items():

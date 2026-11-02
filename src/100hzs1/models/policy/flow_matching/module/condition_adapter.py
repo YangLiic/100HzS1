@@ -18,12 +18,3 @@ class ResidualMLPAdapter(nn.Module):
 
     def forward(self, tokens):
         return tokens + self.fc2(self.act(self.fc1(self.norm(tokens))))
-
-
-class LayerNormResidualMLPAdapter(ResidualMLPAdapter):
-    """Visual Pre-LayerNorm residual MLP; other branch/skip operations are unchanged."""
-
-    def __init__(self, in_features, out_features):
-        super().__init__(in_features, out_features, use_rmsnorm=False)
-        # Match the RMS residual adaptor's epsilon for the normalization ablation.
-        self.norm = nn.LayerNorm(in_features, eps=1e-6)

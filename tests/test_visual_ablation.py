@@ -40,9 +40,9 @@ class VisualAblationTests(unittest.TestCase):
                         'n_obs_steps','n_image_obs_steps','train_dataset','inference']:
                 self.assertEqual(cfg[key],base[key],(name,key))
             m=cfg['model'];v=m['obs_encoder']['emvis_config'];s=name in variants.STAGE4_VARIANTS;r=name in variants.RMS_VARIANTS
-            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if name in variants.RESIDUAL_VARIANTS or name in variants.PLAIN_1024_VARIANTS else (2048,32,8))
+            self.assertEqual((m['hidden_size'],m['num_heads'],m['depth']),(1024,16,8) if r or name in variants.PLAIN_1024_VARIANTS or name=='stage4_resmlp_no_norm' else (2048,32,8))
             self.assertEqual(m['visual_variant'],name);self.assertEqual(v['visual_variant'],name)
-            self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu' if r else 'residual_mlp2x_gelu_layernorm' if name in variants.LN_VARIANTS else 'residual_mlp2x_gelu_no_norm' if name=='stage4_resmlp_no_norm' else 'mlp2x_gelu')
+            self.assertEqual(m['scene_adaptor'],'residual_mlp2x_gelu' if r else 'residual_mlp2x_gelu_no_norm' if name=='stage4_resmlp_no_norm' else 'mlp2x_gelu')
             self.assertEqual(m['state_adaptor'],'mlp3x_gelu');self.assertEqual(m['flow_type'],'fm')
             self.assertEqual(m['noise_scheduler']['num_train_timesteps'],1000)
             self.assertEqual(cfg['inference']['num_inference_timesteps'],4)
@@ -62,8 +62,6 @@ class VisualAblationTests(unittest.TestCase):
             raw=yaml.safe_load((root/('b0_'+name+'_fm4.yaml')).read_text())
             expected={'visual_variant':name}
             if name in variants.STAGE4_VARIANTS:expected['visual_pooling']=False
-            if name == 'stage4_rms':
-                expected['obs_encoder']={'emvis_config':{'mv_fuser_config':{'norm_type':'rmsnorm'}}}
             self.assertEqual(raw['model'],expected)
 
     def test_plain_mlp1024_preset_retains_shared_compression_and_rejects_rms(self):
