@@ -88,3 +88,18 @@ Other normalization modes and unrelated backbone/time/flow recipes are preserved
 The four structures require the user's review before starting the newly requested
 training and 100-fixed-seed evaluation of all four policies, including baseline.
 See [the full paths and verification](../../docs/beat_b0_four_visual_variants_20261102.md).
+
+### Optional post-fusion pooling
+
+The four B0 presets retain `model.visual_pooling: true` by default: the original
+post-fusion adaptive average pool produces 2x2 per view (12 visual tokens).
+Set `model.visual_pooling=false` to skip pooling entirely, preserving the natural
+2x3 grid (18 tokens). Linear128->1024 is retained; all widths/DiT FFNs stay fixed
+by `visual_variant`. No pooling is moved before fusion. The four existing YAMLs
+are sufficient; no additional architecture presets or width switches are needed.
+
+For the two requested no-pool experiments, use `b0_stage4_fm4.yaml` and
+`b0_stage4_rms_fm4.yaml`, each with `model.visual_pooling=false`. Existing pooled
+checkpoints without this field still default to pooling enabled and strict-load.
+An 18-token policy requires fresh training because visual condition positions
+have a different length. Inference reads the choice from the saved config.

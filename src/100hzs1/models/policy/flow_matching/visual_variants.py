@@ -29,6 +29,10 @@ def validate_policy_visual_variant(kwargs):
     variant = validate_visual_variant(variant or "baseline")
     kwargs = dict(kwargs)
     kwargs["visual_variant"] = variant
+    pooling = kwargs.get("visual_pooling", True)
+    if type(pooling) is not bool:
+        raise ValueError("visual_pooling must be a bool")
+    kwargs["visual_pooling"] = pooling
     width = 1024 if variant in RMS_VARIANTS else 2048
     expected = {"hidden_size": width, "num_heads": width // 64,
                 "scene_adaptor": "residual_mlp2x_gelu" if variant in RMS_VARIANTS else "mlp2x_gelu",
@@ -56,8 +60,11 @@ def validate_policy_visual_variant(kwargs):
     for key, value in expected_adapter.items():
         if adapter.get(key) != value:
             raise ValueError(f"visual_variant={variant!r} fixes model_adapter_config.{key}={value!r}")
-    if list(adapter.get("shape_out", [])) != [2, 2]:
-        raise ValueError("B0 visual variants retain post-fusion 2x2 pooling")
+    if adapter.get("use_pooling", True) != pooling:
+        raise ValueError("visual_pooling and model_adapter_config.use_pooling must agree")
+    grid = [2, 2] if pooling else [2, 3]
+    if list(adapter.get("shape_out", [])) != grid:
+        raise ValueError(f"visual_pooling={pooling} requires shape_out={grid}")
     if adapter.get("target", "ResNetAdapter") != "ResNetAdapter":
         raise ValueError("B0 visual variants retain the original pooling/Linear adapter")
     if any(adapter.get(key) for key in ("stage_blocks", "dim_ratio", "use_max_pool", "use_pixelshuffle")):

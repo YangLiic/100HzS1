@@ -1,5 +1,6 @@
 """Four B0 visual presets, fixed controls and post-fusion pooling."""
 from copy import deepcopy
+from unittest.mock import patch
 from importlib import import_module
 import json
 from pathlib import Path
@@ -16,13 +17,13 @@ policy=import_module('100hzs1.models.policy.flow_matching.dit_fm_policy')
 variants=import_module('100hzs1.models.policy.flow_matching.visual_variants')
 PREFIX='backbones/efficientvit_b0/tau_token/'
 
-def recipe(variant):
+def recipe(variant, pooling=True):
     OmegaConf.register_new_resolver('eval',eval,replace=True)
     with initialize_config_dir(version_base=None,config_dir=str(ROOT/'configs/100hzs1_train')):
-        return OmegaConf.to_container(compose(config_name=PREFIX+'b0_'+variant+'_fm4'),resolve=True)
+        return OmegaConf.to_container(compose(config_name=PREFIX+'b0_'+variant+'_fm4',overrides=['model.visual_pooling='+str(pooling).lower()]),resolve=True)
 
-def scene(variant):
-    cfg=deepcopy(recipe(variant)['model']['obs_encoder']['emvis_config'])
+def scene(variant, pooling=True):
+    cfg=deepcopy(recipe(variant,pooling)['model']['obs_encoder']['emvis_config'])
     cfg['load_backbone_pretrain']=False
     return vision.EmVisRM(**cfg)
 
@@ -118,6 +119,38 @@ class VisualAblationTests(unittest.TestCase):
             obs={key:torch.rand(1,3,240,320) for key in a.rgb_key}
             with torch.no_grad():torch.testing.assert_close(a(obs),b(obs),rtol=0,atol=0)
             self.assertEqual(list(b.output_shape_meta()),[3,2,2,1024])
+
+    def test_pooling_can_be_disabled_without_calling_any_pool(self):
+        for name in variants.VISUAL_VARIANTS:
+            with self.subTest(variant=name):
+                cfg=recipe(name,False);m=scene(name,False).train();a=m.model_adapter.patch_merging
+                self.assertFalse(cfg['model']['visual_pooling']);self.assertFalse(a.use_pooling)
+                policy.S1DitFlowMatchingConfig(**deepcopy(cfg['model']))
+                with patch.object(a,'adapter',side_effect=AssertionError('pooling must not execute')):
+                    out=m(torch.rand(1,3,3,240,320))
+                self.assertEqual(list(out.shape),[1,3,6,1024])
+                out.square().mean().backward()
+                self.assertGreater(a.proj.weight.grad.abs().sum().item(),0)
+                if name in variants.STAGE4_VARIANTS:
+                    self.assertGreater(m.backbone.stage4_repeat_projection.weight.grad.abs().sum().item(),0)
+                x=torch.randn(3,128,2,3)
+                torch.testing.assert_close(a(x,(2,3)),a.proj(x.permute(0,2,3,1)),rtol=0,atol=0)
+                with self.assertRaisesRegex(ValueError,'natural grid'):a(x,(2,2))
+
+    def test_pooling_metadata_roundtrips_without_new_visual_parameters(self):
+        for name in ['stage4','stage4_rms']:
+            a=scene(name,True).eval();b=scene(name,False).eval()
+            b.load_state_dict(a.state_dict(),strict=True)
+            self.assertEqual(set(a.state_dict()),set(b.state_dict()))
+            cfg=deepcopy(recipe(name,False)['model']['obs_encoder']['emvis_config']);cfg['load_backbone_pretrain']=False
+            v=vision.VisualEncoder(emvis_config=json.loads(json.dumps(cfg)),rgb_key=['left_cam','right_cam','head_cam']).eval()
+            self.assertEqual(list(v.output_shape_meta()),[3,2,3,1024])
+            v.scene_encoder.load_state_dict(b.state_dict(),strict=True)
+            for bad in ['false',None,0]:
+                raw=deepcopy(recipe(name)['model']);raw['visual_pooling']=bad
+                with self.assertRaisesRegex(ValueError,'must be a bool'):policy.S1DitFlowMatchingConfig(**raw)
+            old=deepcopy(recipe(name)['model']);old.pop('visual_pooling');old['obs_encoder']['emvis_config']['model_adapter_config'].pop('use_pooling')
+            self.assertTrue(policy.S1DitFlowMatchingConfig(**old).visual_pooling)
 
     def test_arbitrary_or_contradictory_architecture_overrides_are_rejected(self):
         base=recipe('baseline')['model']

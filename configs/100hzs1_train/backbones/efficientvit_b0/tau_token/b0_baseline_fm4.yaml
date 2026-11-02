@@ -1,5 +1,5 @@
 # @package _global_
-# Only visual_variant selects the four B0 visual architectures. Other settings are shared.
+# visual_variant selects the B0 architecture; visual_pooling controls post-fusion pooling.
 defaults:
   - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4
   - /observation_config/efficientvit_b0_native_3v
@@ -18,6 +18,7 @@ inference:
 
 model:
   visual_variant: baseline
+  visual_pooling: true
   flow_type: fm
   time_injection: tau_token
   hidden_size: ${eval:"1024 if '${model.visual_variant}' in ('rms', 'stage4_rms') else 2048"}
@@ -34,11 +35,12 @@ model:
       model_adapter_config:
         target: ResNetAdapter
         dim_out: 1024
-        shape_out: [2, 2]
+        use_pooling: ${model.visual_pooling}
+        shape_out: ${eval:"[2, 2] if ${model.visual_pooling} else [2, 3]"}
         conv_num: ${eval:"None if '${model.visual_variant}' in ('stage4', 'stage4_rms') else 2"}
 
 resume_from_checkpoint: null
-output_dir: ${checkpoint_root}/beat_block_hammer/b0_${model.visual_variant}_fm4/${now:%Y%m%d_%H%M%S}
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_${model.visual_variant}_pool${model.visual_pooling}_fm4/${now:%Y%m%d_%H%M%S}
 base_dir: ${output_dir}
 hydra:
   run:

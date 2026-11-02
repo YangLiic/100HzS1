@@ -20,9 +20,13 @@ class AdaptivePatchMerging(nn.Module):
         drop: float = 0.0,
         bias: bool = True,
         use_max_pool=False,
+        use_pooling: bool = True,
         ** kwargs
     ) -> None:
         super().__init__()
+        if type(use_pooling) is not bool:
+            raise ValueError("use_pooling must be a bool")
+        self.use_pooling = use_pooling
         if use_pixelshuffle:
             raise NotImplementedError("AdaptivePixelShuffle not implemented (kept only for config compat)")
         else:
@@ -32,7 +36,11 @@ class AdaptivePatchMerging(nn.Module):
 
     def forward(self, x: Tensor, shape_out: Tuple[int, int]) -> Tensor:
         # x: [B * S * V, C_In, H', W']
-        x = self.adapter(shape_out)(x) # [B * S * V, C_In, H'', W'']
+        if self.use_pooling:
+            x = self.adapter(shape_out)(x)
+        elif tuple(x.shape[-2:]) != tuple(shape_out):
+            raise ValueError(f"Pooling disabled: natural grid {tuple(x.shape[-2:])} "
+                             f"must match shape_out={tuple(shape_out)}")
         x = x.permute(0, 2, 3, 1) # [B * S * V, H'', W'', C_In]
         x = self.proj(x) # [B * S * V, H'', W'', C_Out]
         x = self.drop(x)

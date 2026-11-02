@@ -53,6 +53,7 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
     visual_variant: Optional[str] = None
+    visual_pooling: bool = True
     
 
     def __init__(self, *args, **kwargs):

@@ -224,8 +224,9 @@ class EmVisRM(nn.Module):
         if self.visual_variant in STAGE4_VARIANTS:
             if (not isinstance(self.model_adapter, ResNetAdapter)
                     or len(self.model_adapter.downsample_blocks)
-                    or tuple(self.model_adapter.shape_out) != (2, 2)):
-                raise ValueError("shared stage4 uses only the original post-fusion 2x2 pool and Linear")
+                    or tuple(self.model_adapter.shape_out) != (
+                        (2, 2) if self.model_adapter.patch_merging.use_pooling else (2, 3))):
+                raise ValueError("shared stage4 retains the post-fusion Linear, with optional 2x2 pooling")
 
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
