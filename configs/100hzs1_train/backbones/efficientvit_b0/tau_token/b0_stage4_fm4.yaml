@@ -5,3 +5,4 @@ defaults:
 
 model:
   visual_variant: stage4
+  visual_pooling: false
