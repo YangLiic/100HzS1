@@ -136,7 +136,7 @@ def apply_dataset_normalizer(args, train_dataset, policy_model, ema_policy_model
         return normalizer_source
 
     if normalizer_source == "dataset":
-        norm = validate_norm(getattr(args, "norm", getattr(getattr(policy_model, "config", None), "norm", "minmax")))
+        norm = validate_norm(getattr(args, "norm", getattr(getattr(policy_model, "config", None), "norm", "groot")))
         normalizer = train_dataset.get_normalizer(norm=norm)
         policy_model.set_normalizer(normalizer)
         ema_policy_model.set_normalizer(normalizer)
@@ -353,7 +353,7 @@ def train(args, logger):
 
     # Policy Model creation
     model_args = OmegaConf.to_container(args.model)
-    model_args["norm"] = validate_norm(getattr(args, "norm", model_args.get("norm", "minmax")))
+    model_args["norm"] = validate_norm(getattr(args, "norm", model_args.get("norm", "groot")))
     pkg_config = validate_class_path(model_args.pop('target_config'))
     pkg_policy = validate_class_path(model_args.pop('target_policy'))
     ConfigClass = hydra.utils.get_class(pkg_config)

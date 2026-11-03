@@ -259,7 +259,7 @@ class Block(nn.Module):
         self.norm2 = RmsNorm(hidden_size, eps=1e-6)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
         self.ffn = Mlp(in_features=hidden_size, 
-            hidden_features=hidden_size, 
+            hidden_features=hidden_size,
             act_layer=approx_gelu, drop=0)
         self.norm3 = RmsNorm(hidden_size, eps=1e-6)
 

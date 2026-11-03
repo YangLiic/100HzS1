@@ -7,6 +7,7 @@ from ..common.module_attr_mixin import ModuleAttrMixin
 
 from .utils import format_number, preprocess_images, param_count
 from .adapter import ResNetAdapter
+from ..visual_variants import STAGE4_VARIANTS, validate_visual_variant
 from .mv_fuser import MultiViewFuser
 from .inference_cuda_graph import BackboneCudaGraph
 
@@ -31,6 +32,9 @@ class VisualEncoder(ModuleAttrMixin):
         # Persist the architecture choice even when the caller used defaults.
         if self.scene_encoder.backbone_target == "efficientvit":
             emvis_config["efficientvit_fusion_mode"] = self.scene_encoder.efficientvit_fusion_mode
+            emvis_config["visual_variant"] = self.scene_encoder.visual_variant
+            emvis_config.pop("compress_before_fusion", None)
+            emvis_config.pop("output_projection_type", None)
         # update emvis_config after initialization
         if 'load_backbone_pretrain' in emvis_config:
             emvis_config['load_backbone_pretrain'] = False
@@ -64,12 +68,7 @@ class VisualEncoder(ModuleAttrMixin):
 
 
 class EmVisRM(nn.Module):
-    """Spatial backbone -> channel alignment -> MultiViewFuser -> ResNetAdapter.
-
-    DINOv3 ConvNeXt keeps its original state keys and pixel processing.
-    EfficientViT native mode fuses/compresses at the trunk width. Projected mode
-    is restored explicitly when loading checkpoints created before native support.
-    """
+    """Encode, fuse, then apply the original spatial adapter/pool/Linear."""
 
     def __init__(
         self,
@@ -94,6 +93,7 @@ class EmVisRM(nn.Module):
         mv_fuser_config: Dict = None,
         backbone_trainable: bool = False,
         efficientvit_fusion_mode: str = "native",
+        visual_variant: str = "baseline",
         **kwargs
     ):
         super().__init__()
@@ -102,6 +102,15 @@ class EmVisRM(nn.Module):
         self.dim_2d = dim_2d if dim_2d != None else 1024
 
         self.backbone_target = backbone_target.lower()
+        self.visual_variant = validate_visual_variant(visual_variant)
+        # Neutral old metadata may be read, but removed experimental paths cannot be enabled.
+        if kwargs.pop("compress_before_fusion", False) not in (False, None):
+            raise ValueError("compress_before_fusion was removed; select visual_variant")
+        if kwargs.pop("output_projection_type", "linear") != "linear":
+            raise ValueError("output_projection_type was removed; the visual projection is Linear")
+        if self.visual_variant in STAGE4_VARIANTS and (
+                self.backbone_target != "efficientvit" or efficientvit_fusion_mode != "native"):
+            raise ValueError("shared stage4 requires native EfficientViT-B0 features")
         if 'dinov3' in self.backbone_target and 'cnn' in self.backbone_target:
             # Preserve the original DINOv3 initialization and checkpoint layout.
             from .encoder.dinov3cnn_encoder import DINOv3Encoder
@@ -136,7 +145,7 @@ class EmVisRM(nn.Module):
                 )
             self.efficientvit_fusion_mode = efficientvit_fusion_mode
             self.backbone = EfficientViTEncoder(
-                **backbone_config, frozen=not self.backbone_trainable,
+                **backbone_config, frozen=not self.backbone_trainable, visual_variant=self.visual_variant,
             )
             if self.efficientvit_fusion_mode == "native":
                 self.dim_2d = self.backbone.out_channels
@@ -190,7 +199,7 @@ class EmVisRM(nn.Module):
         else:
             self.mv_fuser = None
 
-        # initialize model adapter (ResNetAdapter only)
+        # Legacy spatial adapter or a projection of backbone-compressed tokens.
         self.shape_out = None
         self.model_adapter = None
         if model_adapter_config:
@@ -198,9 +207,9 @@ class EmVisRM(nn.Module):
                 'dim_in': dim_now,
                 **model_adapter_config
             }
-            assert model_adapter_config.get('target', 'ResNetAdapter') == 'ResNetAdapter', (
-                "model_adapter must be ResNetAdapter"
-            )
+            target = model_adapter_config.get('target', 'ResNetAdapter')
+            if target != 'ResNetAdapter':
+                raise ValueError("Only the original ResNetAdapter pooling/Linear path is supported")
             self.model_adapter = ResNetAdapter(
                 dim_in=model_adapter_config['dim_in'],
                 dim_out=model_adapter_config['dim_out'],
@@ -212,11 +221,12 @@ class EmVisRM(nn.Module):
             dim_now = model_adapter_config['dim_out']
             self.shape_out = model_adapter_config['shape_out']
         self.dim_out = dim_now
-        if self.backbone_target == "efficientvit":
-            logger.info(
-                "EfficientViT fusion mode=%s, native width=%d, fusion width=%d, output width=%d",
-                self.efficientvit_fusion_mode, self.backbone.out_channels, self.dim_2d, self.dim_out,
-            )
+        if self.visual_variant in STAGE4_VARIANTS:
+            if (not isinstance(self.model_adapter, ResNetAdapter)
+                    or len(self.model_adapter.downsample_blocks)
+                    or tuple(self.model_adapter.shape_out) != (
+                        (2, 2) if self.model_adapter.patch_merging.use_pooling else (2, 3))):
+                raise ValueError("shared stage4 retains the post-fusion Linear, with optional 2x2 pooling")
 
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -272,8 +282,16 @@ class EmVisRM(nn.Module):
         token_dict['image_tokens'] = self.backbone_projection(token_dict['image_tokens'])
         return self.token_forward(token_dict)
 
+    def _adapt_spatial_tokens(self, scene_tokens: Tensor, scene_pos: Tensor):
+        # The adapter operates independently on each view's original patch grid.
+        B, V, P, C = scene_tokens.shape
+        flat = self.model_adapter(
+            scene_tokens.reshape(B * V, P, C),
+            scene_pos.reshape(B * V, P, 2),
+        )
+        return flat.reshape(B, V, *flat.shape[-2:])
+
     def token_forward(self, token_dict: Dict):
-        # 2D-only token flow: image_tokens -> mv_fuser -> ResNetAdapter
         time0 = time.time()
         scene_tokens = token_dict['image_tokens']       # [B * S, V, P_image, D]
         scene_pos = token_dict['image_tokens_pos']      # [B * S, V, P_image, 2]
@@ -281,15 +299,10 @@ class EmVisRM(nn.Module):
         if self.mv_fuser is not None:
             scene_tokens = self.mv_fuser(scene_tokens)
 
-        scene_features = scene_tokens
         if self.model_adapter is not None:
-            # Flatten to [B*V, P, C] (adapter takes 3D tokens), restore the view dim afterwards
-            B, V, P, C = scene_tokens.shape
-            flat = self.model_adapter(
-                scene_tokens.reshape(B * V, P, C),
-                scene_pos.reshape(B * V, P, 2),
-            )
-            scene_features = flat.reshape(B, V, *flat.shape[-2:])
+            scene_features = self._adapt_spatial_tokens(scene_tokens, scene_pos)
+        else:
+            scene_features = scene_tokens
         time1 = time.time()
         logger.debug(f"Token forward time: {time1 - time0:.5f} seconds")
         return scene_features

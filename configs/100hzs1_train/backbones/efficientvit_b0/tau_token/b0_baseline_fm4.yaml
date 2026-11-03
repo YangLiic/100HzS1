@@ -1,0 +1,47 @@
+# @package _global_
+# visual_variant selects the B0 architecture; visual_pooling controls post-fusion pooling.
+defaults:
+  - /backbones/efficientvit_b2/tau_token/100hzs1_beat_block_hammer_efficientvit_b2_native_3v_8gpu_L4
+  - /observation_config/efficientvit_b0_native_3v
+  - _self_
+
+norm: groot
+seed: 42
+num_train_epochs: 200
+checkpointing_period: 2000
+inference:
+  num_inference_timesteps: 4
+  backend: eager
+  precision: bf16
+  use_kv_cache: true
+  use_cuda_graph: false
+
+model:
+  visual_variant: baseline
+  visual_pooling: false
+  flow_type: fm
+  time_injection: tau_token
+  hidden_size: ${eval:"1024 if '${model.visual_variant}' in ('rms', 'stage4_rms', 'stage4_resmlp_no_norm', 'mlp1024', 'stage4_mlp1024') else 2048"}
+  depth: 8
+  num_heads: ${eval:'${model.hidden_size} // 64'}
+  scene_adaptor: ${eval:"'residual_mlp2x_gelu' if '${model.visual_variant}' in ('rms', 'stage4_rms') else 'residual_mlp2x_gelu_no_norm' if '${model.visual_variant}' == 'stage4_resmlp_no_norm' else 'mlp2x_gelu'"}
+  state_adaptor: mlp3x_gelu
+  noise_scheduler:
+    num_train_timesteps: 1000
+    num_inference_timesteps: 4
+  obs_encoder:
+    emvis_config:
+      visual_variant: ${model.visual_variant}
+      model_adapter_config:
+        target: ResNetAdapter
+        dim_out: ${eval:"512 if '${model.visual_variant}' in ('mlp1024', 'stage4_mlp1024') else 1024"}
+        use_pooling: ${model.visual_pooling}
+        shape_out: ${eval:"[2, 2] if ${model.visual_pooling} else [2, 3]"}
+        conv_num: ${eval:"None if '${model.visual_variant}' in ('stage4', 'stage4_rms', 'stage4_mlp1024', 'stage4_resmlp_no_norm') else 2"}
+
+resume_from_checkpoint: null
+output_dir: ${checkpoint_root}/beat_block_hammer/b0_${model.visual_variant}_pool${model.visual_pooling}_fm4/${now:%Y%m%d_%H%M%S}
+base_dir: ${output_dir}
+hydra:
+  run:
+    dir: ${output_dir}/hydra

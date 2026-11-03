@@ -1,0 +1,272 @@
+# @package _global_
+inference:
+  backend: eager
+  precision: bf16
+  num_inference_timesteps: 4
+  use_kv_cache: true
+  use_cuda_graph: false
+  tensorrt_batch_size: 1
+  tensorrt_engine_dir: null
+_target_: 100hzs1.trainer.train.train
+gradient_accumulation_steps: 1
+mixed_precision: bf16
+report_to: wandb
+checkpoint_root: /DRoboticsAILab/users/licheng.yang/checkpoints/100HzS1
+base_dir: ${output_dir}
+output_dir: ${checkpoint_root}/${experiment_task}/${campaign}/${experiment_case}
+logging_dir: logs
+checkpoints_total_limit: 4
+seed: 42
+gradient_checkpointing: false
+allow_tf32: false
+vision_backbone_compile: false
+num_train_epochs: 200
+train_batch_size: 128
+val_batch_size: 16
+num_val_batches: 8
+dataloader_num_workers: 64
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  betas:
+  - 0.95
+  - 0.999
+  weight_decay: 1.0e-06
+  eps: 1.0e-08
+lr_scheduler:
+  name: cosine
+  warmup_ratio: 0.05
+  num_cycles: 1
+  power: 1.0
+resume_from_checkpoint: null
+set_grads_to_none: false
+max_grad_norm: 1.0
+checkpointing_period: 2000
+val_period: 5000
+norm: groot
+horizon: 24
+n_obs_steps: 1
+n_image_obs_steps: 1
+obs_image_frame_indices:
+- 0
+n_action_steps: 23
+n_latency_steps: 0
+model:
+  norm: groot
+  flow_type: fm
+  meanflow:
+    time_distribution: logit_normal
+    time_mean: -0.4
+    time_std: 1.0
+    time_embed_scale: 1.0
+    equal_time_ratio: 0.0
+    loss_type: adaptive_l2
+    loss_gamma: 0.5
+    loss_eps: 0.001
+    guidance_scale: 1.0
+  target_config: 100hzs1.models.S1DitFlowMatchingConfig
+  target_policy: 100hzs1.models.S1DitFlowMatching
+  shape_meta:
+    obs:
+      left_cam:
+        shape:
+        - 3
+        - 240
+        - 320
+        type: rgb
+      right_cam:
+        shape:
+        - 3
+        - 240
+        - 320
+        type: rgb
+      head_cam:
+        shape:
+        - 3
+        - 240
+        - 320
+        type: rgb
+      state:
+        shape:
+        - 14
+        type: low_dim
+    action:
+      state:
+        shape:
+        - 14
+      delta_state:
+        shape:
+        - 14
+      endpose:
+        shape:
+        - 16
+      delta_endpose:
+        shape:
+        - 16
+  inference:
+    backend: eager
+    precision: bf16
+    num_inference_timesteps: 4
+    use_kv_cache: true
+    use_cuda_graph: false
+    tensorrt_batch_size: 1
+    tensorrt_engine_dir: null
+  noise_scheduler:
+    num_train_timesteps: 1000
+    num_inference_timesteps: 4
+    noise_beta_alpha: 1.5
+    noise_beta_beta: 1.0
+    noise_s: 0.999
+  scene_adaptor: mlp2x_gelu
+  state_adaptor: mlp3x_gelu
+  time_injection: tau_token
+  hidden_size: 2048
+  depth: 8
+  num_heads: 32
+  horizon: 24
+  state_key: state
+  n_action_steps: 23
+  n_obs_steps: 1
+  n_image_obs_steps: 1
+  obs_encoder:
+    rgb_key:
+    - left_cam
+    - right_cam
+    - head_cam
+    emvis_config:
+      processor_config:
+        load_pretrain: false
+        do_resize: false
+        do_rescale: false
+        do_normalize: true
+        image_mean:
+        - 0.485
+        - 0.456
+        - 0.406
+        image_std:
+        - 0.229
+        - 0.224
+        - 0.225
+      efficientvit_fusion_mode: native
+      dim_2d: null
+      load_backbone_pretrain: true
+      only_2d: true
+      backbone_target: efficientvit
+      backbone_trainable: false
+      mlp_ratio: 1.0
+      drop_p: 0.0
+      only_first_view: false
+      model_adapter_config:
+        target: ResNetAdapter
+        shape_out: ${experiment_grid}
+        dim_out: 1024
+        conv_num: 2
+        use_pooling: ${experiment_pooling}
+      mv_fuser_config:
+        depth: 1
+        num_heads: 16
+        mlp_ratio: 2.0
+        drop_p: 0.0
+        use_view_embed: true
+        num_views: 3
+      visual_variant: ${model.visual_variant}
+  supervision_key: action
+  visual_variant: baseline
+  visual_pooling: ${experiment_pooling}
+ema:
+  update_after_step: 0
+  inv_gamma: 1.0
+  power: 0.75
+  min_value: 0.0
+  max_value: 0.9999
+image_shape:
+- 3
+- 240
+- 320
+shape_meta:
+  obs:
+    left_cam:
+      shape:
+      - 3
+      - 240
+      - 320
+      type: rgb
+    right_cam:
+      shape:
+      - 3
+      - 240
+      - 320
+      type: rgb
+    head_cam:
+      shape:
+      - 3
+      - 240
+      - 320
+      type: rgb
+    state:
+      shape:
+      - 14
+      type: low_dim
+  action:
+    state:
+      shape:
+      - 14
+    delta_state:
+      shape:
+      - 14
+    endpose:
+      shape:
+      - 16
+    delta_endpose:
+      shape:
+      - 16
+train_dataset:
+  task: ${experiment_task}
+  demo: 50
+  _target_: 100hzs1.datasets.builder.build_dataset
+  backend: lerobot
+  bgr_to_rgb: true
+  root: /DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14/${experiment_task}
+  repo_id: robotwin/${experiment_task}
+  task_list: null
+  horizon: 24
+  obs_image_frame_indices:
+  - 0
+  pad_before: 1
+  rgb_key:
+  - left_cam
+  - right_cam
+  - head_cam
+  pad_after: 3
+  seed: 42
+  val_ratio: 0.02
+  max_train_episodes: 50
+  cache_to_ram: true
+  cache_backend: shm
+  cache_mode: eager
+  cache_socket: null
+  cache_decoded_video: true
+  cache_build_num_workers: 8
+  cache_max_episodes: null
+  npy_feature_keys: null
+  dataset_metadata:
+    _target_: lerobot.datasets.lerobot_dataset.LeRobotDatasetMetadata
+    root: /DRoboticsAILab/vepfs_20260622/licheng.yang/datasets/robotwin2.0_lerobot_clean_joint14/beat_block_hammer
+    repo_id: robotwin/beat_block_hammer
+  n_obs_steps: 1
+  video_backend: pyav
+  feature_key_map:
+    observation.state: state
+    observation.images.left: left_cam
+    observation.images.right: right_cam
+    observation.images.head: head_cam
+campaign: robotwin_visual_matrix_fm4_20261102_v1
+experiment_task: adjust_bottle
+experiment_case: unset
+hydra:
+  run:
+    dir: ${output_dir}/hydra
+experiment_pooling: false
+experiment_grid:
+- 2
+- 3

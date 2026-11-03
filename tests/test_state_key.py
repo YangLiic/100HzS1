@@ -18,7 +18,7 @@ MODULES = (
 
 def config_values(key='state', supervision='action'):
     return dict(
-        state_key=key, supervision_key=supervision,
+        norm='minmax', state_key=key, supervision_key=supervision,
         shape_meta={'obs': {'state': {'shape': [2], 'type': 'low_dim'},
                             'delta_state': {'shape': [2], 'type': 'low_dim'}},
                     'action': {'shape': [2]}},

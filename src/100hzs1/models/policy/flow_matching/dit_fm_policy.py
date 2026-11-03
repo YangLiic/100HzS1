@@ -48,13 +48,24 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
     # commanded expert action.
     supervision_key: Optional[str] = None
     self_attn_first: bool = True
-    norm: str = "minmax"
+    norm: str = "groot"
     flow_type: str = "fm"
     time_injection: str = "tau_token"
     meanflow: Optional[dict] = None
+    visual_variant: Optional[str] = None
+    visual_pooling: bool = False
     
 
     def __init__(self, *args, **kwargs):
+        from .visual_variants import validate_policy_visual_variant
+        if kwargs.pop("scene_adaptor_hidden_size", None) is not None:
+            raise ValueError("scene_adaptor_hidden_size was removed; visual RMS MLP uses fixed 2x expansion")
+        kwargs = validate_policy_visual_variant(kwargs)
+        # Only migrate legacy null metadata; independent FFN widths are retired.
+        legacy_ffn_width = kwargs.pop("ffn_hidden_size", None)
+        if legacy_ffn_width is not None:
+            raise ValueError("DiT FFN width is fixed to hidden_size; "
+                             "ffn_hidden_size is no longer supported")
         # Migrate old configs/checkpoints; serialize only the canonical state_key.
         legacy_state_key = kwargs.pop("action_key", None)
         state_key = kwargs.get("state_key")
@@ -68,7 +79,7 @@ class S1DitFlowMatchingConfig(PretrainedConfig):
         self.pkg_map = {}
         for key, value in kwargs.items():
             setattr(self, key, value)
-        self.norm = validate_norm(kwargs.get("norm", "minmax"))
+        self.norm = validate_norm(kwargs.get("norm", "groot"))
         if self.norm != "minmax" and kwargs.get("state_key", "state") != "state":
             raise ValueError("Non-minmax norm currently supports absolute joint state/action; "
                              "delta/endpose configurations retain norm=minmax")
@@ -199,9 +210,9 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
         )
 
         self.scene_adaptor = self.build_condition_adapter(
-            config.scene_adaptor, 
-            in_features=obs_feature_dim, 
-            out_features=hidden_size
+            config.scene_adaptor,
+            in_features=obs_feature_dim,
+            out_features=hidden_size,
         )
 
         # A `state` refers to an action or a proprioception vector
@@ -269,8 +280,19 @@ class S1DitFlowMatching(BasePolicy, PreTrainedModel, ModuleAttrMixin):
 
     def build_condition_adapter(
         self, projector_type, in_features, out_features):
+        if projector_type in ('residual_mlp2x_gelu', 'residual_mlp2x_gelu_no_norm'):
+            from .module.condition_adapter import ResidualMLPAdapter
+            return ResidualMLPAdapter(in_features, out_features,
+                                      use_rmsnorm=projector_type == 'residual_mlp2x_gelu')
         projector = None
-        if projector_type == 'linear':
+        if projector_type == 'identity':
+            if in_features != out_features:
+                raise ValueError(
+                    f"identity condition adapter requires matching widths: "
+                    f"{in_features} != {out_features}"
+                )
+            projector = nn.Identity()
+        elif projector_type == 'linear':
             projector = nn.Linear(in_features, out_features)
         else:
             mlp_gelu_match = re.match(r'^mlp(\d+)x_gelu$', projector_type)

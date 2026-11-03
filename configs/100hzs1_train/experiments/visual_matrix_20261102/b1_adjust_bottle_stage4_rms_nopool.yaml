@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+- base
+- _self_
+experiment_task: adjust_bottle
+experiment_case: b1_adjust_bottle_stage4_rms_nopool
+experiment_pooling: false
+experiment_grid:
+- 2
+- 3
+model:
+  visual_variant: stage4_rms
+  hidden_size: 1024
+  num_heads: 16
+  scene_adaptor: residual_mlp2x_gelu
+  obs_encoder:
+    emvis_config:
+      backbone_trainable: false
+      model_adapter_config:
+        conv_num: null
+      backbone_target: efficientvit
+      backbone_path: ${oc.env:S1_ROOT,.}/pretrained/efficientvit_b1.r256_in1k
+      backbone_config:
+        model_name: efficientvit_b1.r256_in1k

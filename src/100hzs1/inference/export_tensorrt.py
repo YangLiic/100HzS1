@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from .eager import policy_metadata
 from .tensorrt import dependencies, file_hash
+from .fp16_precision import PRECISION_RECIPE, protect_fp16_sensitive_layers
 
 
 class Preprocess(nn.Module):
@@ -241,20 +242,25 @@ def export_and_build(args):
         config.clear_flag(trt.BuilderFlag.TF32)
         config.builder_optimization_level = 3
         config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
+        protected = []
         if args.precision == 'fp16' and name != 'post':
             config.set_flag(trt.BuilderFlag.FP16)
+            protected = protect_fp16_sensitive_layers(network, config, trt)
         plan = builder.build_serialized_network(network, config)
         if plan is None:
             raise RuntimeError(f'TensorRT {name} build failed')
         (args.output / f'{name}.plan').write_bytes(bytes(plan))
         (args.output / f'{name}.export.json').write_text(json.dumps(dict(
             onnx_sha256=file_hash(path), precision='fp32' if name == 'post' else args.precision,
-            batch_size=args.batch_size, builder_optimization_level=3, tf32=False), indent=2))
+            batch_size=args.batch_size, builder_optimization_level=3, tf32=False,
+            protected_fp32_layers=protected,
+            precision_recipe=PRECISION_RECIPE if args.precision == 'fp16' and name != 'post' else 'fp32'), indent=2))
         # Native inference needs only the plans and metadata, not another copy
         # of the checkpoint's large float weights in ONNX form.
         path.unlink()
         del parser, network, config, plan
     metadata['precision'] = args.precision
+    metadata['precision_recipe'] = PRECISION_RECIPE if args.precision == 'fp16' else 'fp32'
     (args.output / 'metadata.json').write_text(json.dumps(metadata, indent=2))
     print('TENSORRT_BUNDLE_BUILT', args.output, flush=True)
 

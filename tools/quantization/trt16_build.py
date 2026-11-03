@@ -44,6 +44,8 @@ def main():
     trt,_=exp.dependencies();logger=trt.Logger(trt.Logger.WARNING);builder=trt.Builder(logger);network=builder.create_network(0);parser=trt.OnnxParser(network,logger)
     if not parser.parse_from_file(str(onnx)):raise RuntimeError('\n'.join(str(parser.get_error(i)) for i in range(parser.num_errors)))
     cfg=builder.create_builder_config();cfg.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE,4<<30);cfg.clear_flag(trt.BuilderFlag.TF32);cfg.builder_optimization_level=3;cfg.set_flag(trt.BuilderFlag.FP16)
+    protected=exp.protect_fp16_sensitive_layers(network,cfg,trt)
+    (args.output/"backbone.precision.json").write_text(json.dumps(dict(precision_recipe=exp.PRECISION_RECIPE,protected_fp32_layers=protected),indent=2))
     plan=builder.build_serialized_network(network,cfg)
     if plan is None:raise RuntimeError('TensorRT FP16 backbone build failed')
     (args.output/'backbone.plan').write_bytes(bytes(plan));onnx.unlink()

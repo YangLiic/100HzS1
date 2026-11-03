@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+- base
+- _self_
+experiment_task: adjust_bottle
+experiment_case: b0_adjust_bottle_baseline_nopool
+experiment_pooling: false
+experiment_grid:
+- 2
+- 3
+model:
+  visual_variant: baseline
+  hidden_size: 2048
+  num_heads: 32
+  scene_adaptor: mlp2x_gelu
+  obs_encoder:
+    emvis_config:
+      backbone_trainable: false
+      model_adapter_config:
+        conv_num: 2
+      backbone_target: efficientvit
+      backbone_path: ${oc.env:S1_ROOT,.}/pretrained/efficientvit_b0.r224_in1k
+      backbone_config:
+        model_name: efficientvit_b0.r224_in1k
