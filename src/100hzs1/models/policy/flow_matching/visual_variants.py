@@ -1,4 +1,4 @@
-"""Named B0 visual architectures; training settings are independent."""
+"""Named EfficientViT-B0/B1 visual architectures; training settings are independent."""
 from copy import deepcopy
 
 VISUAL_VARIANTS = ("baseline", "stage4", "rms", "stage4_rms", "stage4_mlp1024", "mlp1024", "stage4_resmlp_no_norm")
@@ -21,12 +21,12 @@ def validate_policy_visual_variant(kwargs):
     obs = kwargs.get("obs_encoder") or {}
     vision = obs.get("emvis_config") or {}
     backbone = vision.get("backbone_config") or {}
-    is_b0 = (vision.get("backbone_target", "").lower() == "efficientvit"
-             and backbone.get("model_name", "").startswith("efficientvit_b0."))
+    is_supported = (vision.get("backbone_target", "").lower() == "efficientvit"
+             and backbone.get("model_name", "").startswith(("efficientvit_b0.", "efficientvit_b1.")))
     variant = kwargs.get("visual_variant")
-    if not is_b0:
+    if not is_supported:
         if variant not in (None, "baseline"):
-            raise ValueError("B0 visual variants require the EfficientViT-B0 backbone")
+            raise ValueError("Visual variants require the EfficientViT-B0 or B1 backbone")
         return kwargs
     variant = validate_visual_variant(variant or "baseline")
     kwargs = dict(kwargs)
@@ -59,7 +59,7 @@ def validate_policy_visual_variant(kwargs):
         raise ValueError("policy and visual encoder visual_variant must agree")
     vision["visual_variant"] = variant
     if vision.get("efficientvit_fusion_mode", "native") != "native":
-        raise ValueError("B0 visual variants require native 128-dimensional fusion")
+        raise ValueError("B0 visual variants require native backbone-dimensional fusion")
     if vision.get("backbone_trainable", False):
         raise ValueError("B0 visual variants keep the pretrained backbone frozen")
     adapter = vision.get("model_adapter_config", {})

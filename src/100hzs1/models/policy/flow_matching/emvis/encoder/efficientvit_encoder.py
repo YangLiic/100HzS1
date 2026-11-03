@@ -18,8 +18,8 @@ class EfficientViTEncoder(nn.Module):
         self.frozen = bool(frozen)
         self.visual_variant = validate_visual_variant(visual_variant)
         self.shared_stage4 = self.visual_variant in STAGE4_VARIANTS
-        if self.shared_stage4 and (not model_name.startswith("efficientvit_b0.") or not self.frozen):
-            raise ValueError("shared stage4 requires a frozen EfficientViT-B0 backbone")
+        if self.shared_stage4 and (not model_name.startswith(("efficientvit_b0.", "efficientvit_b1.")) or not self.frozen):
+            raise ValueError("shared stage4 requires a frozen EfficientViT-B0 or B1 backbone")
         self.model = timm.create_model(model_name, pretrained=False)
         if not type(self.model).__module__.endswith("efficientvit_mit"):
             raise ValueError(f"Expected MIT EfficientViT, got {type(self.model)}")

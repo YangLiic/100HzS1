@@ -1,0 +1,28 @@
+# @package _global_
+defaults:
+- base
+- _self_
+experiment_task: click_alarmclock
+experiment_case: dinol_click_alarmclock_baseline_nopool
+experiment_pooling: false
+experiment_grid:
+- 2
+- 3
+model:
+  visual_variant: baseline
+  hidden_size: 2048
+  num_heads: 32
+  scene_adaptor: mlp2x_gelu
+  obs_encoder:
+    emvis_config:
+      backbone_trainable: false
+      model_adapter_config:
+        conv_num: 2
+      backbone_target: dinov3cnn
+      dim_2d: 1536
+      backbone_path: /data/vepfs/licheng.yang/DRRM-VODPP/pretrained/dinov3-cnnl
+      backbone_config: {}
+      processor_config:
+        load_pretrain: true
+      mv_fuser_config:
+        num_heads: 24
